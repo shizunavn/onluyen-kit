@@ -1,0 +1,46 @@
+{
+  "manifest_version": 3,
+  "name": "OnluyenKit",
+  "version": "1.0.20",
+  "description": "Trích xuất nội dung học tập, tạo gợi ý từng bước, lưu ghi chú và theo dõi tiến độ trên Onluyen.",
+  "permissions": [
+    "activeTab",
+    "downloads",
+    "storage",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://app.onluyen.vn/*",
+    "https://generativelanguage.googleapis.com/*",
+    "https://*/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "OnluyenKit"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://app.onluyen.vn/*"
+      ],
+      "js": [
+        "math-content.js",
+        "content.js"
+      ],
+      "run_at": "document_start"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "inject.js"
+      ],
+      "matches": [
+        "https://app.onluyen.vn/*"
+      ]
+    }
+  ]
+}

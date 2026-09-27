@@ -1,0 +1,13 @@
+node_modules/
+logs/
+cache/
+answers/
+config.json
+.env
+.env.*
+!.env.example
+bulk-tests.txt
+API_NOTES.md
+tools/
+gemini-config.path
+*.zip

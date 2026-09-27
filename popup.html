@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Onluyen Study Helper - PRO Bot</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #07111f;
+      --surface: #0d1b2e;
+      --surface-2: #12243d;
+      --line: #203d63;
+      --text: #eef6ff;
+      --muted: #9bb0ca;
+      --blue: #2f80ed;
+      --yellow: #ffc329;
+      --green: #22c55e;
+      --red: #ef4444;
+      --purple: #a855f7;
+    }
+    * { box-sizing: border-box; }
+    body {
+      width: 420px;
+      min-height: 580px;
+      margin: 0;
+      background: radial-gradient(circle at 100% 0, #183965 0, var(--bg) 42%);
+      color: var(--text);
+      font: 13px/1.45 Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+    header { padding: 14px 16px 10px; border-bottom: 1px solid var(--line); }
+    .brand { display: flex; align-items: center; gap: 10px; }
+    .owl {
+      display: grid; place-items: center; width: 34px; height: 34px;
+      border-radius: 10px; background: linear-gradient(135deg, var(--blue), #2152a5);
+      box-shadow: 0 4px 16px #0b66d766; font-size: 19px;
+    }
+    h1 { margin: 0; font-size: 14px; font-weight: 700; letter-spacing: .1px; }
+    .subtitle { margin-top: 1px; color: var(--yellow); font-size: 10px; font-weight: 700; }
+    .status { display: flex; gap: 8px; align-items: center; margin-top: 8px; color: var(--muted); font-size: 11px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #64748b; }
+    .dot.ok { background: var(--green); box-shadow: 0 0 9px #22c55e99; }
+    .dot.bad { background: var(--red); }
+    .dot.warn { background: var(--yellow); }
+
+    /* TABS */
+    .tabs {
+      display: flex; background: var(--surface); border-bottom: 1px solid var(--line);
+    }
+    .tab-btn {
+      flex: 1; padding: 9px 4px; font-size: 11px; font-weight: 700; text-align: center;
+      color: var(--muted); background: none; border: none; cursor: pointer; border-bottom: 2px solid transparent;
+    }
+    .tab-btn.active {
+      color: var(--text); border-bottom-color: var(--blue); background: #12243d88;
+    }
+
+    main { display: grid; gap: 10px; padding: 12px; }
+    .tab-pane { display: none; }
+    .tab-pane.active { display: grid; gap: 10px; }
+
+    .card { padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: #0d1b2ee8; }
+    .card-title { margin-bottom: 6px; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .55px; display: flex; justify-content: space-between; align-items: center; }
+    .card p { margin: 0 0 8px; color: var(--muted); font-size: 11px; }
+
+    .meta { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+    .pill { padding: 2px 7px; border: 1px solid #2a4e7c; border-radius: 999px; color: #bcd5f4; font-size: 10px; }
+    .pill.green { border-color: #1b6338; color: #4ade80; background: #0d3820; }
+    .pill.purple { border-color: #632a7c; color: #d8b4fe; background: #2f1244; }
+
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .btn-row { display: flex; gap: 8px; }
+
+    button {
+      min-height: 36px; border: 1px solid transparent; border-radius: 8px; cursor: pointer;
+      background: var(--surface-2); color: var(--text); font: inherit; font-size: 11px; font-weight: 700;
+      padding: 0 10px; transition: all .15s;
+    }
+    button:hover { filter: brightness(1.15); }
+    button:disabled { cursor: wait; opacity: .55; }
+    .btn-primary { background: linear-gradient(135deg, var(--blue), #235bb0); color: #fff; }
+    .btn-ai { background: linear-gradient(135deg, #8b5cf6, #6366f1); color: #fff; box-shadow: 0 2px 10px #8b5cf644; }
+    .btn-run { background: linear-gradient(135deg, #16a34a, #15803d); color: #fff; font-size: 12px; }
+    .btn-stop { background: #7f1d1d; border-color: #b91c1c; color: #fca5a5; }
+    .btn-accent { border-color: #6b5719; background: #322a15; color: #ffe08a; }
+
+    textarea {
+      width: 100%; min-height: 70px; resize: vertical; padding: 8px;
+      border: 1px solid var(--line); border-radius: 8px; outline: none;
+      background: #071424; color: var(--text); font: inherit; font-size: 11px;
+    }
+    textarea:focus { border-color: var(--blue); }
+
+    .key-list { display: grid; gap: 5px; max-height: 100px; overflow: auto; margin-top: 6px; }
+    .key-item {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 4px 8px; border-radius: 6px; background: #071424; font-size: 10px; border: 1px solid #1a3354;
+    }
+    .key-del { color: var(--red); cursor: pointer; padding: 0 4px; font-weight: bold; }
+
+    .message { display: none; padding: 8px 10px; border-radius: 8px; color: #bfe8ff; background: #103454; font-size: 11px; }
+    .message.show { display: block; }
+    .message.error { color: #fecaca; background: #451a1a; }
+    .message.success { color: #bbf7d0; background: #14532d; }
+
+    .progress-box {
+      padding: 8px; border-radius: 8px; background: #071424; border: 1px solid var(--line);
+      font-size: 11px; color: #93c5fd; display: none;
+    }
+    .progress-box.show { display: block; }
+
+    .history { display: grid; gap: 6px; max-height: 110px; overflow: auto; }
+    .history-item { padding: 6px 8px; border-radius: 6px; background: #081628; color: var(--muted); font-size: 10px; }
+    .history-item b { display: block; overflow: hidden; color: var(--text); text-overflow: ellipsis; white-space: nowrap; }
+    footer { padding: 0 14px 10px; color: #6f87a4; text-align: center; font-size: 9px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <div class="owl">🦉</div>
+      <div>
+        <h1>OnluyenKit</h1>
+        <div class="subtitle">Tự động hóa học tập & Giải bài AI</div>
+      </div>
+    </div>
+    <div class="status">
+      <span id="statusDot" class="dot"></span>
+      <span id="statusText">Đang kiểm tra kết nối…</span>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab-btn active" data-tab="tabBot">🤖 Giải & Tự Điền</button>
+    <button class="tab-btn" data-tab="tabKeys">🔑 API Key (Gemini)</button>
+    <button class="tab-btn" data-tab="tabNotes">📝 Ghi Chú & Feedback</button>
+  </nav>
+
+  <main>
+    <div id="message" class="message"></div>
+
+    <!-- TAB 1: GIẢI BÀI & TỰ ĐIỀN -->
+    <div id="tabBot" class="tab-pane active">
+      <!-- Trạng thái đề -->
+      <section class="card">
+        <div class="card-title">
+          <span>Thông tin bài làm</span>
+          <span id="qCountPill" class="pill green">0 câu</span>
+        </div>
+        <div class="meta">
+          <span id="apiStatusPill" class="pill">Đang bắt API...</span>
+          <span id="dbStatusPill" class="pill purple">DB: 0 đáp án</span>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-title">Đáp án có sẵn trên trang Kết quả</div>
+        <p>Mở trang Kết quả/History đã chấm để lưu cả ID và nội dung đáp án, giúp bot khớp đúng khi Onluyen đảo phương án.</p>
+        <button id="btnCopyResultAnswers" class="btn-accent" style="width: 100%;">📋 Lấy & Sao chép đáp án</button>
+      </section>
+
+      <!-- Chế độ 2: AI Tự giải trực tiếp -->
+      <section class="card">
+        <div class="card-title">Chế độ 2 — AI Tự Giải (1-Click)</div>
+        <p>Gọi trực tiếp Gemini API (ưu tiên Pro cho Paid Keys, Flash cho Free Keys).</p>
+        <button id="btnAiSolve" class="btn-ai" style="width: 100%;">✨ AI Tự Giải Trực Tiếp (Gemini API)</button>
+      </section>
+
+      <!-- Chế độ 1: Prompt cho AI ngoài -->
+      <section class="card">
+        <div class="card-title">Chế độ 1 — Prompt Cho AI Ngoài</div>
+        <p>Sao chép prompt và tự lưu ảnh câu hỏi vào Downloads để đính kèm cho ChatGPT / Claude / Gemini Web, rồi dán JSON vào đây.</p>
+        <button id="btnCopyPrompt" class="btn-primary" style="width: 100%; margin-bottom: 8px;">📋 Sao chép Prompt AI</button>
+        <textarea id="txtDatabase" placeholder='Dán JSON đáp án từ AI vào đây: [{"cau":1,"dap_an":"A"}, ...]'></textarea>
+        <div style="display: flex; gap: 8px; margin-top: 6px;">
+          <button id="btnSaveDb" style="flex: 1;">💾 Nạp Database</button>
+          <button id="btnClearDb" style="width: 70px;">Xóa</button>
+        </div>
+      </section>
+
+      <!-- Động cơ Auto-Selector -->
+      <section class="card">
+        <div class="card-title">Động cơ Tự Chọn Đáp Án</div>
+        <p>Tự động lật từng câu trên Onluyen và click chọn phương án tương ứng.</p>
+        <div class="btn-row">
+          <button id="btnStartBot" class="btn-run" style="flex: 1;">🚀 Bắt đầu Tự Điền</button>
+          <button id="btnStopBot" class="btn-stop" style="width: 90px;">⏹️ Dừng lại</button>
+        </div>
+        <div id="progressBox" class="progress-box" style="margin-top: 8px;"></div>
+      </section>
+    </div>
+
+    <!-- TAB 2: CÀI ĐẶT API KEY -->
+    <div id="tabKeys" class="tab-pane">
+      <section class="card">
+        <div class="card-title">
+          <span>Paid Keys Pool (Pro Model)</span>
+          <span class="pill green">gemini-3.5-pro</span>
+        </div>
+        <p>Key trả phí — được ưu tiên chạy model Pro để giải đề chính xác nhất.</p>
+        <textarea id="txtPaidKeyInput" placeholder="Dán key AIza... hoặc AQ...., mỗi dòng 1 key"></textarea>
+        <button id="btnAddPaidKey" class="btn-primary" style="width: 100%; margin-top: 6px;">+ Thêm vào Paid Pool</button>
+        <div id="paidKeyList" class="key-list"></div>
+      </section>
+
+      <section class="card">
+        <div class="card-title">
+          <span>Free Keys Pool (Flash Model)</span>
+          <span class="pill">gemini-3.5-flash</span>
+        </div>
+        <p>Key miễn phí — chỉ chạy model Flash/Flash-lite để tiết kiệm quota.</p>
+        <textarea id="txtFreeKeyInput" placeholder="Dán key AIza... hoặc AQ...., mỗi dòng 1 key"></textarea>
+        <button id="btnAddFreeKey" class="btn-primary" style="width: 100%; margin-top: 6px;">+ Thêm vào Free Pool</button>
+        <div id="freeKeyList" class="key-list"></div>
+      </section>
+    </div>
+
+    <!-- TAB 3: GHI CHÚ & XUẤT BẢN -->
+    <div id="tabNotes" class="tab-pane">
+      <section class="card" id="feedbackCard">
+        <div class="card-title">Feedback / Báo lỗi</div>
+        <p>Sao chép mẫu báo lỗi, điền cách tái hiện và gửi qua GitHub, Discord hoặc Facebook. Không gửi API key hoặc mật khẩu.</p>
+        <div class="grid">
+          <button id="copyFeedback" class="btn-primary">Sao chép mẫu báo lỗi</button>
+          <button id="copyDiscord">Discord: lam017367</button>
+        </div>
+        <p style="margin-top: 10px; margin-bottom: 0;">
+          <a href="https://github.com/shizunavn/onluyen-kit/issues" target="_blank" rel="noopener noreferrer" style="color: #93c5fd;">GitHub Issues</a>
+          · <a href="https://www.facebook.com/profile.php?id=61591530574387" target="_blank" rel="noopener noreferrer" style="color: #93c5fd;">Facebook</a>
+        </p>
+      </section>
+      <section class="card">
+        <div class="card-title">Xuất tài liệu học tập</div>
+        <div class="grid">
+          <button id="copyTutor" class="btn-primary">💡 Prompt Gợi ý</button>
+          <button id="refresh">↻ Đọc lại trang</button>
+          <button id="exportMd">↓ Xuất Markdown</button>
+          <button id="exportJson">↓ Xuất JSON</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-title">Ghi chú cục bộ</div>
+        <textarea id="note" placeholder="Ghi chú cách làm hoặc câu cần xem lại..."></textarea>
+        <div style="display: flex; gap: 8px; margin-top: 6px;">
+          <button id="bookmark" class="btn-accent" style="flex: 1;">☆ Đánh dấu</button>
+          <button id="saveNote" style="width: 100px;">Lưu ghi chú</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-title">Đã xem gần đây</div>
+        <div id="history" class="history"><div class="history-item">Chưa có dữ liệu.</div></div>
+      </section>
+    </div>
+  </main>
+
+  <footer>OnluyenKit · <button id="openFeedback" style="padding: 2px 6px; font-size: 10px;">Feedback / Báo lỗi</button></footer>
+  <script src="popup.js"></script>
+</body>
+</html>

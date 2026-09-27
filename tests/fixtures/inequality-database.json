@@ -1,0 +1,135 @@
+[
+  {
+    "cau": 1,
+    "id": "13537528",
+    "loai": "MCQ",
+    "dap_an": "C",
+    "noi_dung_dap_an": "2x-3y≤5."
+  },
+  {
+    "cau": 2,
+    "id": "fixture-2",
+    "loai": "MCQ",
+    "dap_an": "A",
+    "noi_dung_dap_an": "Ví dụ kiểm thử 2"
+  },
+  {
+    "cau": 3,
+    "id": "13537524",
+    "loai": "MCQ",
+    "dap_an": "D",
+    "noi_dung_dap_an": "x+y≤50."
+  },
+  {
+    "cau": 4,
+    "id": "fixture-4",
+    "loai": "MCQ",
+    "dap_an": "A",
+    "noi_dung_dap_an": "Ví dụ kiểm thử 4"
+  },
+  {
+    "cau": 5,
+    "id": "fixture-5",
+    "loai": "MCQ",
+    "dap_an": "A",
+    "noi_dung_dap_an": "Ví dụ kiểm thử 5"
+  },
+  {
+    "cau": 6,
+    "id": "12495418",
+    "loai": "MCQ",
+    "dap_an": "C",
+    "noi_dung_dap_an": "nửa mặt phẳng không chứa gốc toạ độ, bờ là đường thẳng y=1/2x+5/2 (không bao gồm đường thẳng)."
+  },
+  {
+    "cau": 7,
+    "id": "fixture-7",
+    "loai": "MCQ",
+    "dap_an": "A",
+    "noi_dung_dap_an": "Ví dụ kiểm thử 7"
+  },
+  {
+    "cau": 8,
+    "id": "fixture-8",
+    "loai": "MCQ",
+    "dap_an": "A",
+    "noi_dung_dap_an": "Ví dụ kiểm thử 8"
+  },
+  {
+    "cau": 9,
+    "id": "fixture-9",
+    "loai": "MCQ",
+    "dap_an": "A",
+    "noi_dung_dap_an": "Ví dụ kiểm thử 9"
+  },
+  {
+    "cau": 10,
+    "id": "fixture-10",
+    "loai": "MCQ",
+    "dap_an": "A",
+    "noi_dung_dap_an": "Ví dụ kiểm thử 10"
+  },
+  {
+    "cau": 11,
+    "id": "fixture-11",
+    "loai": "MCQ",
+    "dap_an": "A",
+    "noi_dung_dap_an": "Ví dụ kiểm thử 11"
+  },
+  {
+    "cau": 12,
+    "id": "fixture-12",
+    "loai": "MCQ",
+    "dap_an": "A",
+    "noi_dung_dap_an": "Ví dụ kiểm thử 12"
+  },
+  {
+    "cau": 13,
+    "id": "fixture-13",
+    "loai": "MCQ",
+    "dap_an": "A",
+    "noi_dung_dap_an": "Ví dụ kiểm thử 13"
+  },
+  {
+    "cau": 14,
+    "id": "fixture-14",
+    "loai": "MCQ",
+    "dap_an": "A",
+    "noi_dung_dap_an": "Ví dụ kiểm thử 14"
+  },
+  {
+    "cau": 15,
+    "id": "fixture-15",
+    "loai": "MCQ",
+    "dap_an": "A",
+    "noi_dung_dap_an": "Ví dụ kiểm thử 15"
+  },
+  {
+    "cau": 16,
+    "id": "fixture-16",
+    "loai": "MCQ",
+    "dap_an": "A",
+    "noi_dung_dap_an": "Ví dụ kiểm thử 16"
+  },
+  {
+    "cau": 17,
+    "id": "fixture-17",
+    "loai": "MCQ",
+    "dap_an": "A",
+    "noi_dung_dap_an": "Ví dụ kiểm thử 17"
+  },
+  {
+    "cau": 18,
+    "id": "fixture-18",
+    "loai": "MCQ",
+    "dap_an": "A",
+    "noi_dung_dap_an": "Ví dụ kiểm thử 18"
+  },
+  {
+    "cau": 19,
+    "id": "fixture-19",
+    "loai": "MCQ",
+    "dap_an": "A",
+    "noi_dung_dap_an": "Ví dụ kiểm thử 19"
+  }
+]
