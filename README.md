@@ -44,7 +44,7 @@ Cần Node.js 22.12+ và Chrome hoặc Edge đã cài trên máy.
 npm ci
 ```
 
-Copy `bulk-tests.example.txt` thành `bulk-tests.txt`, thêm URL bài của bạn, mỗi dòng một URL. Dòng bắt đầu bằng `#` được bỏ qua.
+Mở `bulk-tests.txt`, xóa dòng ví dụ rồi dán URL bài của bạn, mỗi dòng một URL. Dòng bắt đầu bằng `#` được bỏ qua.
 
 ```sh
 node cli/bulk-runner.js --links bulk-tests.txt --answers answers.json --dry-run --headed
@@ -60,7 +60,7 @@ Runner hỏi thông tin đăng nhập khi chạy. Có thể dùng `--gemini-conf
 
 `--dry-run` vẫn có thể chọn và lưu đáp án trên trang, nhưng không nộp bài cuối cùng. Thêm `--submit` khi muốn nộp. `--headless` chạy không hiện cửa sổ trình duyệt. Trên Windows có thể dùng `run-bulk-dry.cmd` hoặc `run-bulk.cmd` (script thứ hai có nộp bài).
 
-Cache và log được tạo trong `cache/` và `logs/`. Dữ liệu này, file link cá nhân và cấu hình key đều được bỏ qua bởi Git.
+Cache và log được tạo trong `cache/` và `logs/`. Các thư mục này và cấu hình key được bỏ qua bởi Git. `bulk-tests.txt` trong repo chỉ chứa ví dụ; đừng commit link bài cá nhân khi chỉnh file này.
 
 ## Phát triển
 

@@ -1,2 +1,0 @@
-# Copy this file to bulk-tests.txt and add your own test URLs, one per line.
-# https://app.onluyen.vn/school/test/YOUR_TEST_ID
