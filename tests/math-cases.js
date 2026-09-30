@@ -12,9 +12,31 @@ const numberedQuestion = {
   latex: listHeading + '\n' + numberedStatements.map(([latex, , suffix], i) => `${i + 1}) $${latex}$${suffix}`).join('\n'),
   html: `<p>${listHeading}</p>` + numberedStatements.map(([, mathml, suffix], i) => `<p>${i + 1} ) <mjx-container><svg aria-hidden="true"></svg><mjx-assistive-mml>${m(mathml)}</mjx-assistive-mml></mjx-container>${suffix}</p>`).join('')
 };
+const splitNumberedQuestion = {
+  html: require('node:fs').readFileSync(require('node:path').join(__dirname, 'fixtures/numbered-mathml-question.html'), 'utf8'),
+  latex: [
+    listHeading,
+    '1 \\( ) \\) \\( \'\'2x+1 \\) là số lẻ\\( \'\' \\) (với \\(x\\) là số tự nhiên).',
+    '2 \\( ) \\) \\( \'\'x+1=0\'\' \\).',
+    '3 \\( ) \\) \\( \'\'x-2y\\ge0\'\' \\)',
+    '4 \\( ) \\) \\( \'\'(x+y)^2 \\) là số chính phương\\( \'\' \\) (với \\(x,y\\) là số tự nhiên).',
+    '5 \\( ) \\) \\( \'\'x^2-3x+2=0\'\'. \\)',
+    '6 \\( ) \\) \\( \'\'2x-1\\le7\'\'. \\)'
+  ].join('\n')
+};
 module.exports = {
   numberedQuestion,
+  splitNumberedQuestion,
   equal: [
+    [splitNumberedQuestion.latex, splitNumberedQuestion.html],
+    ['1 \\( ) \\) $x+1=0$', '<p>1 <math><mo>)</mo></math> <math><mi>x</mi><mo>+</mo><mn>1</mn><mo>=</mo><mn>0</mn></math></p>'],
+    ['$f^{\\prime\\prime}$', m('<msup><mi>f</mi><mo>″</mo></msup>')],
+    ['$f^{\\prime\\prime}$', 'f″'],
+    ['Điều kiện f″=0.', `<p>Điều kiện ${m('<msup><mi>f</mi><mo>″</mo></msup><mo>=</mo><mn>0</mn>')}.</p>`],
+    ['$f\'\'$', 'f″'],
+    ['$x_1^{\\prime}$', m('<msubsup><mi>x</mi><mn>1</mn><mo>′</mo></msubsup>')],
+    ['$\'\'x$', m('<msup><mi></mi><mo>″</mo></msup><mi>x</mi>')],
+    ['$ {}^{\\prime\\prime}x$', '$\'\'x$'],
     [numberedQuestion.latex, numberedQuestion.html],
     ['1) x+1=0\n2) x-1=0', '<p>1 ) x+1=0</p><p>2 ) x-1=0</p>'],
     ['a) x+1=0\nb) x-1=0', 'a) $x+1=0$\nb) $x-1=0$'],
@@ -54,6 +76,7 @@ module.exports = {
     ['$x^{12}$', '<m:math xmlns:m="http://www.w3.org/1998/Math/MathML"><m:msup><m:mi>x</m:mi><m:mn>12</m:mn></m:msup></m:math>']
   ],
   different: [
+    ['f′', 'f″'], ['f″', 'f²'], ['$\'\'x$', '$x\'\'$'],
     ['1) $x+1=0$', '2) $x+1=0$'],
     ['1) $x+1=0$', '1) $x-1=0$'],
     ['$(x+y)^2$', '$x+y^2$'],
@@ -67,5 +90,5 @@ module.exports = {
     [m('<mi>x</mi><mo>&#x2064;</mo><mi>y</mi>'), '$xy$']
   ],
   unsupported: ['$\\unknown{x}$', m('<menclose notation="circle"><mi>x</mi></menclose>'), '$\\begin{unknown}x\\end{unknown}$', m('<mfrac linethickness="0"><mn>1</mn><mn>2</mn></mfrac>')],
-  incomplete: ['$x+2', '\\(x+2', '$\\frac{1}$', '<math><mi>x</mi>', '<mjx-container><svg></svg></mjx-container>', '$1)x+1=0$', '$x+1)$', 'x+1)', '<math><mn>1</mn><mo>)</mo><mi>x</mi></math>', '1) $x+1)$', '$x^(2)$', '$(x+y^2$']
+  incomplete: ['$x+2', '\\(x+2', '$\\frac{1}$', '$\\frac{}{2}$', '<math><mi>x</mi>', '<mjx-container><svg></svg></mjx-container>', '$1)x+1=0$', '$x+1)$', 'x+1)', '<math><mn>1</mn><mo>)</mo><mi>x</mi></math>', '1) $x+1)$', '$x^(2)$', '$(x+y^2$', '<p><math><mi>x</mi></math> 1 <math><mo>)</mo></math></p>']
 };

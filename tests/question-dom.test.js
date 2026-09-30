@@ -105,7 +105,25 @@ function trueFalseRow(key, text, token) {
     assert.match(numberedPrompt.prompt, /mệnh đề chứa biến/);
     assert.match(numberedPrompt.prompt, /1\) 2x\+1/);
     assert.match(numberedPrompt.prompt, /6\) 2x-1≤7/);
+    const splitNumberedQuestion = require('./math-cases').splitNumberedQuestion;
+    await numberedPage.evaluate(html => {
+      document.querySelector('.question-name').innerHTML = html;
+    }, splitNumberedQuestion.html);
+    const renderedNumberedPrompt = await send(numberedPage, { action: 'OL_GET_AI_PROMPT' });
+    assert.equal(renderedNumberedPrompt.ok, true, renderedNumberedPrompt.error);
+    assert.match(renderedNumberedPrompt.prompt, /1\) ″2x\+1/);
+    assert.match(renderedNumberedPrompt.prompt, /6\) ″2x-1≤7″/);
+    await numberedPage.evaluate(content => {
+      window.__ONLUYEN_RAW_DATA__ = { questions: [{ dataStandard: {
+        numberQuestion: 9023, stepIndex: 22, typeAnswer: 2,
+        languagesData: { vi: { content } }
+      } }] };
+    }, splitNumberedQuestion.latex);
+    const apiNumberedPrompt = await send(numberedPage, { action: 'OL_GET_AI_PROMPT' });
+    assert.equal(apiNumberedPrompt.ok, true, apiNumberedPrompt.error);
+    assert.match(apiNumberedPrompt.prompt, /6\) ″2x-1≤7″/);
     const brokenNumberedPrompt = await numberedPage.evaluate(() => {
+      window.__ONLUYEN_RAW_DATA__ = null;
       document.querySelector('math').innerHTML = '<mi>x</mi><mo>)</mo>';
       return new Promise(resolve => window.__onluyenListener({ action: 'OL_GET_AI_PROMPT' }, {}, resolve));
     });

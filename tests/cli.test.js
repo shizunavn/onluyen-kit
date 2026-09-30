@@ -101,6 +101,15 @@ const numberedShortPrompt = buildPrompt(numberedShortQuestion);
 assert.match(numberedShortPrompt, /mệnh đề chứa biến/);
 assert.match(numberedShortPrompt, /1\) 2x\+1/);
 assert.match(numberedShortPrompt, /6\) 2x-1≤7/);
+for (const source of Object.values(require('./math-cases').splitNumberedQuestion)) {
+  const splitNumberedShortQuestion = parseApiQuestions([{ dataStandard: {
+    stepIndex: 22, numberQuestion: 9023, typeAnswer: 2,
+    languagesData: { vi: { content: source } }
+  } }]);
+  const prompt = buildPrompt(splitNumberedShortQuestion);
+  assert.match(prompt, /1\) ″2x\+1/);
+  assert.match(prompt, /6\) ″2x-1≤7″/);
+}
 const imageQuestions = parseApiQuestions([{ dataStandard: {
   stepIndex: 0, numberQuestion: 12905197, typeAnswer: 0,
   languagesData: { vi: { content: '<p>Chọn hình miền nghiệm.</p>', options: [

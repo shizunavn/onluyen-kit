@@ -22,7 +22,7 @@
     epsilon: 'ϵ', varepsilon: 'ε', sigma: 'σ', omega: 'ω', Delta: 'Δ', Sigma: 'Σ', Omega: 'Ω',
     sum: '∑', prod: '∏', int: '∫', oint: '∮', partial: '∂', nabla: '∇',
     lbrace: '{', rbrace: '}', lbrack: '[', rbrack: ']', lvert: '|', rvert: '|', vert: '|',
-    langle: '⟨', rangle: '⟩', ell: 'ℓ', dots: '…', ldots: '…', cdots: '⋯'
+    langle: '⟨', rangle: '⟩', ell: 'ℓ', dots: '…', ldots: '…', cdots: '⋯', prime: '′'
   };
   const functions = new Set(['sin', 'cos', 'tan', 'cot', 'sec', 'csc', 'arcsin', 'arccos', 'arctan', 'log', 'ln', 'exp', 'lim', 'max', 'min']);
   const vulgar = { '½': ['1', '2'], '⅓': ['1', '3'], '⅔': ['2', '3'], '¼': ['1', '4'], '¾': ['3', '4'], '⅕': ['1', '5'], '⅖': ['2', '5'], '⅗': ['3', '5'], '⅘': ['4', '5'], '⅙': ['1', '6'], '⅚': ['5', '6'], '⅛': ['1', '8'], '⅜': ['3', '8'], '⅝': ['5', '8'], '⅞': ['7', '8'] };
@@ -30,6 +30,7 @@
   const subs = Object.fromEntries(Array.from('₀₁₂₃₄₅₆₇₈₉₊₋₍₎').map((c, i) => [c, Array.from('0123456789+-()')[i]]));
   const symbol = value => {
     if (!value) return { t: 'row', items: [] };
+    if (value === '″' || value === '‴') return row(Array.from({ length: value === '″' ? 2 : 3 }, () => ({ t: 'symbol', v: '′' })));
     const set = { 'ℕ': 'N', 'ℤ': 'Z', 'ℚ': 'Q', 'ℝ': 'R', 'ℂ': 'C' }[value];
     if (set) return { t: 'style', style: 'mathbb', body: { t: 'symbol', v: set } };
     return { t: 'symbol', v: value.replace(/[−–﹣－]/g, '-').replace(/⩽/g, '≤').replace(/⩾/g, '≥').replace(/⧵/g, '∖') };
@@ -77,6 +78,9 @@
       }
       if (vulgar[c]) { tokens.push({ k: 'vulgar', v: c }); i++; continue; }
       if (c === '√') { tokens.push({ k: 'cmd', v: 'sqrt' }); i++; continue; }
+      if (["'", '′', '″', '‴'].includes(c)) {
+        tokens.push({ k: 'prime', v: c === '″' ? 2 : c === '‴' ? 3 : 1 }); i++; continue;
+      }
       const accent = { '\u20d7': 'vec', '\u0304': 'bar', '\u0302': 'hat', '\u0307': 'dot', '\u0308': 'ddot', '\u0332': 'underline' }[c];
       if (accent) { tokens.push({ k: 'accent', v: accent }); i++; continue; }
       const num = source.slice(i).match(/^\d+(?:\.\d+)?/);
@@ -99,12 +103,12 @@
     const tokens = tokenize(raw);
     let pos = 0, depth = 0;
     const peek = () => tokens[pos];
-    function argument() {
+    function argument(allowEmptyBase = false) {
       if (!peek()) incomplete('Thiếu đối số công thức');
       if (peek().k === '{') {
         pos++; const value = sequence(() => peek()?.k === '}');
         if (peek()?.k !== '}') incomplete('Thiếu dấu }');
-        if (value.t === 'row' && !value.items.length) incomplete('Đối số công thức trống');
+        if (value.t === 'row' && !value.items.length && !(allowEmptyBase && ['^', '_'].includes(tokens[pos + 1]?.k))) incomplete('Đối số công thức trống');
         pos++; return value;
       }
       if (plain && peek().v === '(') {
@@ -151,7 +155,7 @@
         if (token.k === 'vulgar') return { t: 'fraction', numerator: { t: 'number', v: vulgar[token.v][0] }, denominator: { t: 'number', v: vulgar[token.v][1] } };
         if (token.k === 'fn') return { t: 'function', v: token.v };
         if (plain && (token.k === '{' || token.k === '}')) return symbol(token.v);
-        if (token.k === '{') { pos--; return argument(); }
+        if (token.k === '{') { pos--; return argument(true); }
         if (token.k === 'char') {
           if (allowFence && ['(', '['].includes(token.v)) {
             // Keep a fenced expression together so a following ^/_ applies
@@ -220,6 +224,15 @@
     function sequence(stop = () => false) {
       const items = [];
       while (peek() && !stop()) {
+        if (peek().k === 'prime') {
+          let count = 0;
+          while (peek()?.k === 'prime') count += tokens[pos++].v;
+          const base = items.pop() || row([]);
+          if (base.t === 'script' && base.sup) fail('Chỉ số bị lặp');
+          const script = base.t === 'script' ? { ...base } : { t: 'script', base, sub: null, sup: null };
+          script.sup = row(Array.from({ length: count }, () => symbol('′')));
+          items.push(script); continue;
+        }
         if (peek().k === 'accent') {
           const token = tokens[pos++], body = items.pop();
           if (!body) fail('Dấu trên biến không có cơ số');
@@ -346,7 +359,11 @@
     if (node.t === 'symbol' || node.t === 'number' || node.t === 'function' || node.t === 'literal') return node.v;
     if (node.t === 'row') return node.items.map(render).join('');
     if (node.t === 'fraction') return `\\frac{${render(node.numerator)}}{${render(node.denominator)}}`;
-    if (node.t === 'script') return `${node.base.t === 'row' ? `{${render(node.base)}}` : render(node.base)}${node.sub ? `_{${render(node.sub)}}` : ''}${node.sup ? `^{${render(node.sup)}}` : ''}`;
+    if (node.t === 'script') {
+      const sup = render(node.sup);
+      if (sup && /^′+$/.test(sup) && !node.sub) return `${render(node.base)}${sup.length === 2 ? '″' : sup.length === 3 ? '‴' : sup}`;
+      return `${node.base.t === 'row' ? `{${render(node.base)}}` : render(node.base)}${node.sub ? `_{${render(node.sub)}}` : ''}${node.sup ? `^{${sup}}` : ''}`;
+    }
     if (node.t === 'root') return `\\sqrt${render(node.degree) === '2' ? '' : `[${render(node.degree)}]`}{${render(node.body)}}`;
     if (node.t === 'accent') return `\\${node.kind}{${render(node.body)}}`;
     if (node.t === 'style') return `\\${node.style}{${render(node.body)}}`;
@@ -359,7 +376,7 @@
     // predicate includes prose (e.g. x chia hết cho 3).
     if (/^(?:\(\d+\)\s*)?[A-Za-z]\s*=\s*\{[\s\S]*\}$/.test(s)) return true;
     if (/[\p{L}]/u.test(s.replace(/[A-Za-zα-ωΑ-Ωℕℤℚℝℂⁿ]/gu, ''))) return false;
-    if (/\\[A-Za-z]+|[≤≥⩽⩾∪∩∈∉⊂⊆⊃⊇∞ℕℤℚℝℂ√½⅓⅔¼¾⅕⅖⅗⅘⅙⅚⅛⅜⅝⅞²³⁰¹⁴⁵⁶⁷⁸⁹₀-₉\u20d7\u0304\u0302\u0307\u0308\u0332]/u.test(s)) return true;
+    if (/\\[A-Za-z]+|[≤≥⩽⩾∪∩∈∉⊂⊆⊃⊇∞ℕℤℚℝℂ√½⅓⅔¼¾⅕⅖⅗⅘⅙⅚⅛⅜⅝⅞²³⁰¹⁴⁵⁶⁷⁸⁹₀-₉′″‴\u20d7\u0304\u0302\u0307\u0308\u0332]/u.test(s)) return true;
     if (!/[\p{L}\p{N}]/u.test(s)) return false;
     return /^[\dA-Za-zα-ωΑ-Ω\s+\-−–=<>^_()[\]{},;.:|/×·]+$/u.test(s) && !/[A-Za-z]{4,}/.test(s);
   }
@@ -367,11 +384,19 @@
     let s = decode(value).trim();
     if (!s) return;
     const pattern = /\$\$([\s\S]*?)\$\$|\$([^$]*?)\$|\\\(([\s\S]*?)\\\)|\\\[([\s\S]*?)\\\]/g;
-    let end = 0, found = false;
+    let end = 0, found = false, lineHasMath = false;
     for (const m of s.matchAll(pattern)) {
       found = true;
-      splitPlain(s.slice(end, m.index), segments);
-      segments.push({ format: 'latex', raw: m[1] ?? m[2] ?? m[3] ?? m[4] });
+      const prefix = s.slice(end, m.index);
+      const raw = m[1] ?? m[2] ?? m[3] ?? m[4];
+      if (/\r?\n/.test(prefix)) lineHasMath = false;
+      if (!lineHasMath && /(?:^|\n)\s*\d+\s*$/.test(prefix) && raw.trim() === ')') {
+        splitPlain(prefix + ')', segments);
+      } else {
+        splitPlain(prefix, segments);
+        segments.push({ format: 'latex', raw });
+        lineHasMath = true;
+      }
       end = m.index + m[0].length;
     }
     if (found) { splitPlain(s.slice(end), segments); return; }
@@ -398,13 +423,13 @@
     } else {
       // Read compact formulas in prose separately from Vietnamese text. Never
       // turn a sentence containing a relation symbol into one large formula.
-      const chunk = '[A-Za-zα-ωΑ-Ω\\dℕℤℚℝℂⁿ⁰¹²³⁴⁵⁶⁷⁸⁹₀-₉+\\-−=<>≤≥⩽⩾^_()[\\]{},;:|/×·√½⅓⅔¼¾.]+';
+      const chunk = '[A-Za-zα-ωΑ-Ω\\dℕℤℚℝℂⁿ⁰¹²³⁴⁵⁶⁷⁸⁹₀-₉′″‴+\\-−=<>≤≥⩽⩾^_()[\\]{},;:|/×·√½⅓⅔¼¾.]+';
       const inline = new RegExp(`${chunk}(?:\\s*[+\\-−=<>≤≥⩽⩾/×·]\\s*${chunk})*`, 'gu');
       let offset = 0;
       for (const match of s.matchAll(inline)) {
         if (/\p{L}/u.test(s[match.index - 1] || '') || /\p{L}/u.test(s[match.index + match[0].length] || '')) continue;
         const formula = match[0].replace(/[.,]$/, '');
-        if (!looksMath(formula) || !/[=<>≤≥⩽⩾+\-−/^_√²³⁰¹⁴⁵⁶⁷⁸⁹₀-₉;]|^\([\d,]+\)$/u.test(formula)) continue;
+        if (!looksMath(formula) || !/[=<>≤≥⩽⩾+\-−/^_√²³⁰¹⁴⁵⁶⁷⁸⁹₀-₉′″‴;]|^\([\d,]+\)$/u.test(formula)) continue;
         if (match.index > offset) segments.push({ format: 'text', raw: s.slice(offset, match.index) });
         segments.push({ format: 'plain', raw: formula });
         offset = match.index + formula.length;
@@ -426,27 +451,41 @@
       const segments = [];
       if (/<(?:math\b|mjx-|[A-Za-z][\w:-]*(?:\s|>))/i.test(source)) {
         const tree = markup(source);
-        let pending = '';
+        let pending = '', lineHasMath = false;
+        const append = value => {
+          pending += value;
+          if (/\r?\n/.test(value)) lineHasMath = false;
+        };
         const flush = () => { splitPlain(pending, segments); pending = ''; };
+        const emitMath = (format, raw, node) => {
+          // Onluyen can render just the list delimiter as its own MathML node:
+          // text "1 " + <math><mo>)</mo></math>. Recognize it only after a
+          // numeric label at the beginning of a prose line, before other math.
+          const marker = !lineHasMath && pending.match(/(?:^|\n)\s*\d+\s*$/);
+          if (marker && (format === 'latex' ? raw.trim() === ')' : xmlText(node).trim() === ')' && parseMathML(node).t === 'symbol')) {
+            append(')');
+            return;
+          }
+          flush(); segments.push({ format, raw }); lineHasMath = true;
+        };
         const walk = node => {
-          if (typeof node === 'string') { pending += node; return; }
+          if (typeof node === 'string') { append(node); return; }
           if (node.name === 'script' && /^math\/tex/.test(node.attrs.type || '')) {
-            flush(); segments.push({ format: 'latex', raw: xmlText(node) }); return;
+            emitMath('latex', xmlText(node)); return;
           }
           if (['svg', 'script', 'style', 'annotation', 'annotation-xml'].includes(node.name)) return;
-          if (node.name === 'math') { flush(); segments.push({ format: 'mathml', raw: xmlSource(node) }); return; }
+          if (node.name === 'math') { emitMath('mathml', xmlSource(node), node); return; }
           if (node.name === 'mjx-container') {
-            flush();
             const findMath = n => typeof n === 'string' ? null : n.name === 'math' ? n : n.nodes.map(findMath).find(Boolean);
             const math = findMath(node);
-            if (math) segments.push({ format: 'mathml', raw: xmlSource(math) });
-            else if (node.attrs['data-latex']) segments.push({ format: 'latex', raw: node.attrs['data-latex'] });
+            if (math) emitMath('mathml', xmlSource(math), math);
+            else if (node.attrs['data-latex']) emitMath('latex', node.attrs['data-latex']);
             else incomplete('MathJax chưa có MathML/LaTeX gốc');
             return;
           }
-          if (['p', 'div', 'br', 'li'].includes(node.name)) pending += '\n';
+          if (['p', 'div', 'br', 'li'].includes(node.name)) append('\n');
           node.nodes.forEach(walk);
-          if (['p', 'div', 'li'].includes(node.name)) pending += '\n';
+          if (['p', 'div', 'li'].includes(node.name)) append('\n');
         };
         walk(tree); flush();
       } else splitPlain(source, segments);
