@@ -92,6 +92,29 @@ function trueFalseRow(key, text, token) {
   const browser = await puppeteer.launch({ executablePath, headless: true });
 
   try {
+    const numberedQuestion = require('./math-cases').numberedQuestion;
+    const numberedPage = await mount(browser, `
+      <div id="test-step-question"><div class="question-container">
+        <div class="question-info"><div class="num">Câu: 23 <span>#9023</span></div></div>
+        <div class="question-name">${numberedQuestion.html}</div>
+        <div class="answer-input">Đáp án: <input type="text"></div>
+        <div class="submit-bar"><button>BỎ QUA</button></div>
+      </div></div>`);
+    const numberedPrompt = await send(numberedPage, { action: 'OL_GET_AI_PROMPT' });
+    assert.equal(numberedPrompt.ok, true, numberedPrompt.error);
+    assert.match(numberedPrompt.prompt, /mệnh đề chứa biến/);
+    assert.match(numberedPrompt.prompt, /1\) 2x\+1/);
+    assert.match(numberedPrompt.prompt, /6\) 2x-1≤7/);
+    const brokenNumberedPrompt = await numberedPage.evaluate(() => {
+      document.querySelector('math').innerHTML = '<mi>x</mi><mo>)</mo>';
+      return new Promise(resolve => window.__onluyenListener({ action: 'OL_GET_AI_PROMPT' }, {}, resolve));
+    });
+    assert.equal(brokenNumberedPrompt.ok, false);
+    assert.match(brokenNumberedPrompt.error, /Ngoặc đóng/);
+    assert.equal(await numberedPage.$eval('.answer-input input', element => element.value), '');
+    assert.equal(await numberedPage.$eval('.submit-bar button', element => element.textContent), 'BỎ QUA');
+    await numberedPage.close();
+
     const routePage = await mount(browser, `
       <div id="test-step-question"><div class="question-container">
         <div class="question-info"><div class="num">Câu: 1 <span>#12460413</span></div></div>

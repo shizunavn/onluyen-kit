@@ -117,7 +117,7 @@
         const value = peek().v;
         tokens.splice(pos, 1, { k: 'number', v: value[0] }, { k: 'number', v: value.slice(1) });
       }
-      return atom();
+      return atom(plain);
     }
     function rawGroup() {
       if (peek()?.k !== '{') incomplete('Thiếu nhóm {...}');
@@ -130,7 +130,7 @@
       }
       incomplete('Nhóm LaTeX bị cắt');
     }
-    function atom() {
+    function atom(allowFence = true) {
       if (++depth > 128) fail('Công thức lồng quá sâu');
       try {
         const token = tokens[pos++];
@@ -152,7 +152,16 @@
         if (token.k === 'fn') return { t: 'function', v: token.v };
         if (plain && (token.k === '{' || token.k === '}')) return symbol(token.v);
         if (token.k === '{') { pos--; return argument(); }
-        if (token.k === 'char') return symbol(token.v);
+        if (token.k === 'char') {
+          if (allowFence && ['(', '['].includes(token.v)) {
+            // Keep a fenced expression together so a following ^/_ applies
+            // to the whole base rather than just its closing delimiter.
+            const body = sequence(() => peek()?.k === 'char' && [')', ']'].includes(peek().v));
+            if (!peek()) incomplete('Ngoặc công thức chưa đóng');
+            return row([symbol(token.v), body, symbol(tokens[pos++].v)]);
+          }
+          return symbol(token.v);
+        }
         if (token.k !== 'cmd') fail(`Thành phần sai vị trí: ${token.v}`);
         const name = token.v;
         if (aliases[name]) return symbol(aliases[name]);
@@ -367,6 +376,21 @@
     }
     if (found) { splitPlain(s.slice(end), segments); return; }
     if (/\$|\\[()[\]]/.test(s)) incomplete('Delimiter công thức chưa đóng');
+    const lines = s.split(/\r?\n/);
+    if (lines.length > 1 && lines.slice(1).some(line => /^\s*(\d+|[A-Za-z])\s*\)(?=\s|$)/.test(line))) {
+      lines.forEach(line => splitPlain(line, segments));
+      return;
+    }
+    // Number/letter list markers belong to surrounding prose. A fragment like
+    // "1)" is often flushed immediately before a MathJax container; treating
+    // it as math would introduce an unmatched closing fence into that formula.
+    // Only infer markers in un-delimited text, with a whitespace/end boundary.
+    const marker = s.match(/^(\d+|[A-Za-z])\s*\)(?=\s|$)/);
+    if (marker) {
+      segments.push({ format: 'text', raw: `${marker[1]})` });
+      splitPlain(s.slice(marker[0].length), segments);
+      return;
+    }
     const bare = s.replace(/[.]$/, '');
     if (bare && looksMath(bare)) {
       segments.push({ format: 'plain', raw: bare });
@@ -420,9 +444,9 @@
             else incomplete('MathJax chưa có MathML/LaTeX gốc');
             return;
           }
-          if (['p', 'div', 'br', 'li'].includes(node.name)) pending += ' ';
+          if (['p', 'div', 'br', 'li'].includes(node.name)) pending += '\n';
           node.nodes.forEach(walk);
-          if (['p', 'div', 'li'].includes(node.name)) pending += ' ';
+          if (['p', 'div', 'li'].includes(node.name)) pending += '\n';
         };
         walk(tree); flush();
       } else splitPlain(source, segments);

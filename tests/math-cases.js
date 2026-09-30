@@ -1,6 +1,30 @@
 const m = body => `<math xmlns="http://www.w3.org/1998/Math/MathML">${body}</math>`;
+const numberedStatements = [
+  ['2x+1', '<mn>2</mn><mi>x</mi><mo>+</mo><mn>1</mn>', ' là số lẻ (với x là số tự nhiên).'],
+  ['x+1=0', '<mi>x</mi><mo>+</mo><mn>1</mn><mo>=</mo><mn>0</mn>', '.'],
+  ['x-2y\\ge0', '<mi>x</mi><mo>−</mo><mn>2</mn><mi>y</mi><mo>≥</mo><mn>0</mn>', '.'],
+  ['(x+y)^2', '<msup><mrow><mo>(</mo><mi>x</mi><mo>+</mo><mi>y</mi><mo>)</mo></mrow><mn>2</mn></msup>', ' là số chính phương (với x, y là số tự nhiên).'],
+  ['x^2-3x+2=0', '<msup><mi>x</mi><mn>2</mn></msup><mo>−</mo><mn>3</mn><mi>x</mi><mo>+</mo><mn>2</mn><mo>=</mo><mn>0</mn>', '.'],
+  ['2x-1\\le7', '<mn>2</mn><mi>x</mi><mo>−</mo><mn>1</mn><mo>≤</mo><mn>7</mn>', '.']
+];
+const listHeading = 'Trong các câu sau, có bao nhiêu câu là mệnh đề chứa biến?';
+const numberedQuestion = {
+  latex: listHeading + '\n' + numberedStatements.map(([latex, , suffix], i) => `${i + 1}) $${latex}$${suffix}`).join('\n'),
+  html: `<p>${listHeading}</p>` + numberedStatements.map(([, mathml, suffix], i) => `<p>${i + 1} ) <mjx-container><svg aria-hidden="true"></svg><mjx-assistive-mml>${m(mathml)}</mjx-assistive-mml></mjx-container>${suffix}</p>`).join('')
+};
 module.exports = {
+  numberedQuestion,
   equal: [
+    [numberedQuestion.latex, numberedQuestion.html],
+    ['1) x+1=0\n2) x-1=0', '<p>1 ) x+1=0</p><p>2 ) x-1=0</p>'],
+    ['a) x+1=0\nb) x-1=0', 'a) $x+1=0$\nb) $x-1=0$'],
+    ['1) $x+1=0$', `<p>1) ${m('<mi>x</mi><mo>+</mo><mn>1</mn><mo>=</mo><mn>0</mn>')}</p>`],
+    ['1 ) $x+1=0$', '1) x+1=0'],
+    ['a) $x-2y\\ge0$', `<div>a ) ${m('<mi>x</mi><mo>−</mo><mn>2</mn><mi>y</mi><mo>≥</mo><mn>0</mn>')}</div>`],
+    ['2) $x^2-3x+2=0$', '2) x²-3x+2=0'],
+    ['$(x+y)^2$', '(x+y)²'],
+    ['$((x+y)^2-z)_1$', m('<msub><mrow><mo>(</mo><msup><mrow><mo>(</mo><mi>x</mi><mo>+</mo><mi>y</mi><mo>)</mo></mrow><mn>2</mn></msup><mo>−</mo><mi>z</mi><mo>)</mo></mrow><mn>1</mn></msub>')],
+    ['$[x+y]^2$', m('<msup><mrow><mo>[</mo><mi>x</mi><mo>+</mo><mi>y</mi><mo>]</mo></mrow><mn>2</mn></msup>')],
     ['\\(x+y\\le 50\\)', 'x+y⩽50.'],
     ['$x+y\\geqslant50$', m('<mrow><mi>x</mi><mo>+</mo><mi>y</mi><mo>≥</mo><mn>50</mn></mrow>')],
     ['$\\frac{1}{\\frac{x}{y}}$', m('<mfrac><mn>1</mn><mfrac><mi>x</mi><mi>y</mi></mfrac></mfrac>')],
@@ -30,6 +54,10 @@ module.exports = {
     ['$x^{12}$', '<m:math xmlns:m="http://www.w3.org/1998/Math/MathML"><m:msup><m:mi>x</m:mi><m:mn>12</m:mn></m:msup></m:math>']
   ],
   different: [
+    ['1) $x+1=0$', '2) $x+1=0$'],
+    ['1) $x+1=0$', '1) $x-1=0$'],
+    ['$(x+y)^2$', '$x+y^2$'],
+    ['$(x+y)^2$', '$[x+y]^2$'],
     ['x+y', 'x−y'], ['x<2', 'x≤2'], ['x≤2', 'x≥2'], ['A', 'a'],
     ['x²', 'x₂'], ['$\\frac{x}{y}$', '$\\frac{y}{x}$'], ['(2;11)', '[2;11]'],
     ['$\\sqrt[3]{x}$', '$\\sqrt{x}$'], ['x+y', 'y+x'], ['1/2', '0,5'],
@@ -39,5 +67,5 @@ module.exports = {
     [m('<mi>x</mi><mo>&#x2064;</mo><mi>y</mi>'), '$xy$']
   ],
   unsupported: ['$\\unknown{x}$', m('<menclose notation="circle"><mi>x</mi></menclose>'), '$\\begin{unknown}x\\end{unknown}$', m('<mfrac linethickness="0"><mn>1</mn><mn>2</mn></mfrac>')],
-  incomplete: ['$x+2', '\\(x+2', '$\\frac{1}$', '<math><mi>x</mi>', '<mjx-container><svg></svg></mjx-container>']
+  incomplete: ['$x+2', '\\(x+2', '$\\frac{1}$', '<math><mi>x</mi>', '<mjx-container><svg></svg></mjx-container>', '$1)x+1=0$', '$x+1)$', 'x+1)', '<math><mn>1</mn><mo>)</mo><mi>x</mi></math>', '1) $x+1)$', '$x^(2)$', '$(x+y^2$']
 };

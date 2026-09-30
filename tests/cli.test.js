@@ -91,6 +91,16 @@ assert.equal(localizedEnglishQuestions[0].choices.length, 4);
 assert.match(buildPrompt(localizedEnglishQuestions), /B\. c-a-d-b-e/);
 assert.equal(matchBankAnswers(localizedEnglishQuestions, [{ cau: 7, id: '13257730', dap_an: 'D', noi_dung_dap_an: 'c - a - d - b - e' }]).matched[0].dap_an, 'B');
 assert.throws(() => buildPrompt([{ number: 1, answerType: 'MCQ', choices: [], prompt: 'Text without choices.' }]), /thiếu phương án/);
+const numberedQuestion = require('./math-cases').numberedQuestion;
+const numberedShortQuestion = parseApiQuestions([{ dataStandard: {
+  stepIndex: 22, numberQuestion: 9023, typeAnswer: 2,
+  languagesData: { vi: { content: numberedQuestion.html } }
+} }]);
+assert.equal(numberedShortQuestion[0].answerType, 'SHORT');
+const numberedShortPrompt = buildPrompt(numberedShortQuestion);
+assert.match(numberedShortPrompt, /mệnh đề chứa biến/);
+assert.match(numberedShortPrompt, /1\) 2x\+1/);
+assert.match(numberedShortPrompt, /6\) 2x-1≤7/);
 const imageQuestions = parseApiQuestions([{ dataStandard: {
   stepIndex: 0, numberQuestion: 12905197, typeAnswer: 0,
   languagesData: { vi: { content: '<p>Chọn hình miền nghiệm.</p>', options: [
