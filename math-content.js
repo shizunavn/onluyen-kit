@@ -514,12 +514,26 @@
     if (content.status !== 'ok') return content;
     if (content.error) return { ...content.error, content };
     try {
-      const mapped = content.segments.map(segment => {
-        if (segment.format === 'text') return { t: 'text', v: decode(segment.raw).normalize('NFC').replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/\p{L}+/gu, word => {
-          if (/^[A-Z]{1,3}$/.test(word)) return word;
-          const lower = word.toLocaleLowerCase('vi');
-          return lower === 'toạ' ? 'tọa' : lower;
-        }).replace(/\s+/g, ' ').trim().replace(/\.$/, '') };
+      const mapped = content.segments.flatMap(segment => {
+        if (segment.format === 'text') {
+          const value = decode(segment.raw).normalize('NFC').replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/\p{L}+/gu, word => {
+            if (/^[A-Z]{1,3}$/.test(word)) return word;
+            const lower = word.toLocaleLowerCase('vi');
+            return lower === 'toạ' ? 'tọa' : lower;
+          }).replace(/\s+/g, ' ').trim().replace(/\.$/, '');
+          // Short capital names in prose (triangle ABC, points A/B, P/Q)
+          // have the same letters whether rendered as text or math. Preserve
+          // case and order; never flatten scripts, accents or other math nodes.
+          const parts = [];
+          let offset = 0;
+          for (const match of value.matchAll(/(?<![\p{L}\p{N}_])[A-Z]{1,3}(?![\p{L}\p{N}_])/gu)) {
+            if (match.index > offset) parts.push({ t: 'text', v: value.slice(offset, match.index).trim() });
+            parts.push({ t: 'math', body: parseLatex(match[0], true) });
+            offset = match.index + match[0].length;
+          }
+          if (offset < value.length) parts.push({ t: 'text', v: value.slice(offset).trim() });
+          return parts;
+        }
         if (segment.format === 'latex' || segment.format === 'plain') {
           const raw = segment.raw.trim().replace(/^(\d+),(\d+)$/, '$1.$2');
           return { t: 'math', body: parseLatex(raw, segment.format === 'plain' && !/\\[A-Za-z]/.test(raw)) };

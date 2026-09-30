@@ -1,4 +1,11 @@
 const m = body => `<math xmlns="http://www.w3.org/1998/Math/MathML">${body}</math>`;
+const triangleAnswer = 'Nếu tam giác ABC là tam giác cân thì tam giác ABC là tam giác đều.';
+const triangleChoices = [
+  'Nếu tam giác ABC là tam giác cân và có một góc bằng 60⁰ thì tam giác ABC là tam giác đều.',
+  triangleAnswer,
+  'Nếu tam giác ABC là tam giác đều thì tam giác ABC là tam giác có ba cạnh bằng nhau.',
+  'Nếu tam giác ABC là tam giác đều thì là tam giác cân và có một góc bằng 60⁰.'
+].map(text => `<p>${text.replaceAll('ABC', `<mjx-container><svg></svg><mjx-assistive-mml>${m('<mi>A</mi><mi>B</mi><mi>C</mi>')}</mjx-assistive-mml></mjx-container>`).replaceAll('60⁰', m('<msup><mn>60</mn><mn>0</mn></msup>'))}</p>`);
 const numberedStatements = [
   ['2x+1', '<mn>2</mn><mi>x</mi><mo>+</mo><mn>1</mn>', ' là số lẻ (với x là số tự nhiên).'],
   ['x+1=0', '<mi>x</mi><mo>+</mo><mn>1</mn><mo>=</mo><mn>0</mn>', '.'],
@@ -25,10 +32,17 @@ const splitNumberedQuestion = {
   ].join('\n')
 };
 module.exports = {
+  triangleAnswer,
+  triangleChoices,
   numberedQuestion,
   splitNumberedQuestion,
   logicNumberedQuestion: require('node:fs').readFileSync(require('node:path').join(__dirname, 'fixtures/logic-numbered-mathml-question.html'), 'utf8'),
   equal: [
+    [triangleAnswer, triangleChoices[1]],
+    [triangleAnswer, 'Nếu tam giác $ABC$ là tam giác cân thì tam giác $ABC$ là tam giác đều.'],
+    [{ version: 1, segments: [{ format: 'text', raw: triangleAnswer }] }, triangleChoices[1]],
+    ['Điểm A thuộc tam giác ABC.', `<p>Điểm ${m('<mi>A</mi>')} thuộc tam giác ${m('<mi>A</mi><mi>B</mi><mi>C</mi>')}.</p>`],
+    ['Mệnh đề P và Q.', `<p>Mệnh đề ${m('<mi>P</mi>')} và ${m('<mi>Q</mi>')}.</p>`],
     ['1) $P\\Rightarrow Q$', `<p>${m('<mn>1</mn><mo stretchy="false">)</mo>')} ${m('<mi>P</mi><mo>⇒</mo><mi>Q</mi>')}</p>`],
     ['$1)$ $P\\Rightarrow Q$', '1) P⇒Q'],
     ['<p><script type="math/tex">1)</script> <script type="math/tex">P\\Rightarrow Q</script></p>', '1) P⇒Q'],
@@ -84,6 +98,14 @@ module.exports = {
     ['$x^{12}$', '<m:math xmlns:m="http://www.w3.org/1998/Math/MathML"><m:msup><m:mi>x</m:mi><m:mn>12</m:mn></m:msup></m:math>']
   ],
   different: [
+    [triangleAnswer, triangleChoices[0]],
+    [triangleAnswer, triangleChoices[2]],
+    [triangleAnswer, triangleChoices[3]],
+    [triangleAnswer, triangleAnswer.replaceAll('ABC', 'ACB')],
+    [triangleAnswer, triangleAnswer.replaceAll('ABC', 'abc')],
+    [triangleAnswer, triangleAnswer.replaceAll('ABC', 'AB²C')],
+    [triangleAnswer, triangleAnswer.replaceAll('ABC', 'AB₂C')],
+    ['Tam giác ABCD.', 'Tam giác $ABC$D.'],
     ['P⇒Q', 'Q⇒P'], ['P⇒Q', 'P⇔Q'], ['1) P⇒Q', '2) P⇒Q'],
     ['f′', 'f″'], ['f″', 'f²'], ['$\'\'x$', '$x\'\'$'],
     ['1) $x+1=0$', '2) $x+1=0$'],

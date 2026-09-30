@@ -1,6 +1,6 @@
 {
   "name": "onluyen-kit",
-  "version": "1.6.18",
+  "version": "1.6.19",
   "private": true,
   "description": "Onluyen browser extension and local bulk runner",
   "scripts": {

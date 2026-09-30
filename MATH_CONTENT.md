@@ -31,4 +31,6 @@ Existing Vietnamese fields remain supported. Optional `math_content` on a databa
 
 The reader supports common operators, relations, fractions, roots, scripts, sets, intervals, functions, accents/vectors, sums/integrals, matrices and systems. Unsupported commands/elements remain diagnosable; missing MathJax source is incomplete. It is deliberately conservative about flattened legacy data, malformed syntax and ambiguous positional caches. Layout and rendering differences can normalize; case, operators, order, grouping and numeric structure remain significant.
 
+Standalone capital names of one to three letters in prose (such as `A`, `P`, or triangle `ABC`) compare as the same sequence of letters when rendered in LaTeX or MathML. This also applies when reading older text metadata. Letter case and order still matter; scripts and accents are retained as separate structure.
+
 Short-answer input behavior is unchanged. CLI test-cache schema is now 3, with old caches still readable. Source metadata is versioned independently at 1. Run `npm test` for the shared Node/browser corpus and integration checks.

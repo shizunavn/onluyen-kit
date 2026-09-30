@@ -139,6 +139,20 @@ assert.equal(matchedImageAnswer.missing.length, 0);
 assert.equal(matchedImageAnswer.matched[0].dap_an, 'A');
 assert.throws(() => validateAndEnrichAnswers([{ cau: 1, dap_an: 'B', id_dap_an: 'image-a', anh_dap_an: imageAnswer.anh_dap_an }], imageQuestions), /mâu thuẫn/);
 
+const { triangleAnswer, triangleChoices } = require('./math-cases');
+const triangleQuestions = parseApiQuestions([{ dataStandard: {
+  stepIndex: 5, numberQuestion: 13039101, typeAnswer: 0,
+  languagesData: { vi: { content: 'Mệnh đề đảo của mệnh đề đã cho là', options: triangleChoices.map((content, i) => ({ idOption: `triangle-${i}`, content })) } }
+} }]);
+const triangleEntry = { cau: 6, id: '13039101', loai: 'MCQ', dap_an: 'B', noi_dung_dap_an: triangleAnswer };
+const triangleEnriched = validateAndEnrichAnswers([triangleEntry], triangleQuestions);
+assert.equal(triangleEnriched[0].dap_an, 'B');
+const triangleShuffled = [{ ...triangleQuestions[0], choices: [1, 0, 2, 3].map((i, index) => ({ ...triangleQuestions[0].choices[i], label: String.fromCharCode(65 + index) })) }];
+assert.equal(validateAndEnrichAnswers([triangleEntry], triangleShuffled)[0].dap_an, 'A');
+const triangleBank = matchBankAnswers(triangleShuffled, JSON.parse(JSON.stringify(triangleEnriched)));
+assert.equal(triangleBank.missing.length, 0);
+assert.equal(triangleBank.matched[0].dap_an, 'A');
+
 const oldHistory = [{
   cau: 1,
   id: '12475737',

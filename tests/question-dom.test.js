@@ -798,6 +798,55 @@ function trueFalseRow(key, text, token) {
     assert.deepEqual(mathState, { selected: 'A', submits: 1, errors: [] });
     await mathJaxPage.close();
 
+    const { triangleAnswer, triangleChoices } = require('./math-cases');
+    let triangleCache;
+    for (const order of [[0, 1, 2, 3], [1, 0, 2, 3]]) {
+      const expected = String.fromCharCode(65 + order.indexOf(1));
+      const trianglePage = await mount(browser, `
+        <div id="test-step-question"><div class="question-container">
+          <div class="question-info"><div class="num">Câu: 1 <span>#13039101</span></div></div>
+          <div class="question-name">Mệnh đề đảo của mệnh đề đã cho là</div>
+          ${order.map((index, i) => `<div class="question-option"><span class="question-option-label">${String.fromCharCode(65 + i)}</span><div class="question-option-content">${triangleChoices[index]}</div><input type="checkbox"></div>`).join('')}
+          <div class="submit-bar"><button>BỎ QUA</button></div>
+        </div></div>`);
+      await trianglePage.evaluate(() => {
+        window.__triangleSelected = null;
+        window.__triangleSubmits = 0;
+        const button = document.querySelector('.submit-bar button');
+        document.querySelectorAll('.question-option').forEach(option => option.addEventListener('click', () => {
+          document.querySelectorAll('.question-option input').forEach(input => { input.checked = false; });
+          option.querySelector('input').checked = true;
+          window.__triangleSelected = option.querySelector('.question-option-label').innerText;
+          button.innerText = 'TRẢ LỜI';
+        }));
+        button.addEventListener('click', () => {
+          if (button.innerText !== 'TRẢ LỜI') return;
+          window.__triangleSubmits++;
+          button.innerText = 'KẾT THÚC';
+        });
+      });
+      const loadedTriangle = await send(trianglePage, {
+        action: 'OL_LOAD_DATABASE',
+        json: [{ cau: 6, id: '13039101', loai: 'MCQ', dap_an: 'B', noi_dung_dap_an: triangleAnswer }]
+      });
+      assert.equal(loadedTriangle.ok, true, loadedTriangle.error);
+      assert.equal(loadedTriangle.answers[0].dap_an, expected);
+      if (triangleCache) {
+        const restoredTriangle = await send(trianglePage, { action: 'OL_LOAD_DATABASE', json: triangleCache });
+        assert.equal(restoredTriangle.ok, true, restoredTriangle.error);
+        assert.equal(restoredTriangle.answers[0].dap_an, expected, 'Cached answer follows ABC content after options move');
+      }
+      triangleCache = loadedTriangle.json;
+      await send(trianglePage, { action: 'OL_START_BOT' });
+      await trianglePage.waitForFunction(() => window.__BOT_RUNNING__ === false);
+      assert.deepEqual(await trianglePage.evaluate(() => ({
+        selected: window.__triangleSelected,
+        submits: window.__triangleSubmits,
+        errors: window.__runtimeMessages.filter(message => message.action === 'BOT_ERROR').map(message => message.error)
+      })), { selected: expected, submits: 1, errors: [] });
+      await trianglePage.close();
+    }
+
     const safetyPage = await mount(browser, `
       <div id="test-step-question"><div class="question-container">
         <div class="question-info"><div class="num">Câu: 1 <span>#7001</span></div></div>
