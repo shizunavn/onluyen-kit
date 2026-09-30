@@ -122,6 +122,25 @@ function trueFalseRow(key, text, token) {
     const apiNumberedPrompt = await send(numberedPage, { action: 'OL_GET_AI_PROMPT' });
     assert.equal(apiNumberedPrompt.ok, true, apiNumberedPrompt.error);
     assert.match(apiNumberedPrompt.prompt, /6\) ″2x-1≤7″/);
+    const logicQuestion = require('./math-cases').logicNumberedQuestion;
+    await numberedPage.evaluate(html => {
+      window.__ONLUYEN_RAW_DATA__ = null;
+      document.querySelector('.question-name').innerHTML = html;
+      document.querySelector('.question-info .num').innerHTML = 'Câu: 26 <span>#9026</span>';
+    }, logicQuestion);
+    const logicDomPrompt = await send(numberedPage, { action: 'OL_GET_AI_PROMPT' });
+    assert.equal(logicDomPrompt.ok, true, logicDomPrompt.error);
+    assert.match(logicDomPrompt.prompt, /1\) P⇒Q; 2\) Q⇒P; 3\) P⇔Q;/);
+    assert.match(logicDomPrompt.prompt, /4\) " P là điều kiện cần để có Q "/);
+    await numberedPage.evaluate(content => {
+      window.__ONLUYEN_RAW_DATA__ = { questions: [{ dataStandard: {
+        numberQuestion: 9026, stepIndex: 25, typeAnswer: 2,
+        languagesData: { vi: { content } }
+      } }] };
+    }, logicQuestion);
+    const logicApiPrompt = await send(numberedPage, { action: 'OL_GET_AI_PROMPT' });
+    assert.equal(logicApiPrompt.ok, true, logicApiPrompt.error);
+    assert.match(logicApiPrompt.prompt, /1\) P⇒Q; 2\) Q⇒P; 3\) P⇔Q;/);
     const brokenNumberedPrompt = await numberedPage.evaluate(() => {
       window.__ONLUYEN_RAW_DATA__ = null;
       document.querySelector('math').innerHTML = '<mi>x</mi><mo>)</mo>';

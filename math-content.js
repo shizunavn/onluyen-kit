@@ -376,7 +376,7 @@
     // predicate includes prose (e.g. x chia hết cho 3).
     if (/^(?:\(\d+\)\s*)?[A-Za-z]\s*=\s*\{[\s\S]*\}$/.test(s)) return true;
     if (/[\p{L}]/u.test(s.replace(/[A-Za-zα-ωΑ-Ωℕℤℚℝℂⁿ]/gu, ''))) return false;
-    if (/\\[A-Za-z]+|[≤≥⩽⩾∪∩∈∉⊂⊆⊃⊇∞ℕℤℚℝℂ√½⅓⅔¼¾⅕⅖⅗⅘⅙⅚⅛⅜⅝⅞²³⁰¹⁴⁵⁶⁷⁸⁹₀-₉′″‴\u20d7\u0304\u0302\u0307\u0308\u0332]/u.test(s)) return true;
+    if (/\\[A-Za-z]+|[≤≥⩽⩾⇒⇔→←∪∩∈∉⊂⊆⊃⊇∞ℕℤℚℝℂ√½⅓⅔¼¾⅕⅖⅗⅘⅙⅚⅛⅜⅝⅞²³⁰¹⁴⁵⁶⁷⁸⁹₀-₉′″‴\u20d7\u0304\u0302\u0307\u0308\u0332]/u.test(s)) return true;
     if (!/[\p{L}\p{N}]/u.test(s)) return false;
     return /^[\dA-Za-zα-ωΑ-Ω\s+\-−–=<>^_()[\]{},;.:|/×·]+$/u.test(s) && !/[A-Za-z]{4,}/.test(s);
   }
@@ -392,6 +392,8 @@
       if (/\r?\n/.test(prefix)) lineHasMath = false;
       if (!lineHasMath && /(?:^|\n)\s*\d+\s*$/.test(prefix) && raw.trim() === ')') {
         splitPlain(prefix + ')', segments);
+      } else if (!lineHasMath && /(?:^|\n)\s*$/.test(prefix) && /^\s*\d+\s*\)\s*$/.test(raw) && s.slice(m.index + m[0].length).trim()) {
+        splitPlain(prefix + raw.trim(), segments);
       } else {
         splitPlain(prefix, segments);
         segments.push({ format: 'latex', raw });
@@ -423,13 +425,13 @@
     } else {
       // Read compact formulas in prose separately from Vietnamese text. Never
       // turn a sentence containing a relation symbol into one large formula.
-      const chunk = '[A-Za-zα-ωΑ-Ω\\dℕℤℚℝℂⁿ⁰¹²³⁴⁵⁶⁷⁸⁹₀-₉′″‴+\\-−=<>≤≥⩽⩾^_()[\\]{},;:|/×·√½⅓⅔¼¾.]+';
-      const inline = new RegExp(`${chunk}(?:\\s*[+\\-−=<>≤≥⩽⩾/×·]\\s*${chunk})*`, 'gu');
+      const chunk = '[A-Za-zα-ωΑ-Ω\\dℕℤℚℝℂⁿ⁰¹²³⁴⁵⁶⁷⁸⁹₀-₉′″‴+\\-−=<>≤≥⩽⩾⇒⇔→←^_()[\\]{},;:|/×·√½⅓⅔¼¾.]+';
+      const inline = new RegExp(`${chunk}(?:\\s*[+\\-−=<>≤≥⩽⩾⇒⇔→←/×·]\\s*${chunk})*`, 'gu');
       let offset = 0;
       for (const match of s.matchAll(inline)) {
         if (/\p{L}/u.test(s[match.index - 1] || '') || /\p{L}/u.test(s[match.index + match[0].length] || '')) continue;
         const formula = match[0].replace(/[.,]$/, '');
-        if (!looksMath(formula) || !/[=<>≤≥⩽⩾+\-−/^_√²³⁰¹⁴⁵⁶⁷⁸⁹₀-₉′″‴;]|^\([\d,]+\)$/u.test(formula)) continue;
+        if (!looksMath(formula) || !/[=<>≤≥⩽⩾⇒⇔→←+\-−/^_√²³⁰¹⁴⁵⁶⁷⁸⁹₀-₉′″‴;]|^\([\d,]+\)$/u.test(formula)) continue;
         if (match.index > offset) segments.push({ format: 'text', raw: s.slice(offset, match.index) });
         segments.push({ format: 'plain', raw: formula });
         offset = match.index + formula.length;
@@ -451,6 +453,7 @@
       const segments = [];
       if (/<(?:math\b|mjx-|[A-Za-z][\w:-]*(?:\s|>))/i.test(source)) {
         const tree = markup(source);
+        const proseDocument = /<(?:p|div|li|br)\b/i.test(source);
         let pending = '', lineHasMath = false;
         const append = value => {
           pending += value;
@@ -465,6 +468,20 @@
           if (marker && (format === 'latex' ? raw.trim() === ')' : xmlText(node).trim() === ')' && parseMathML(node).t === 'symbol')) {
             append(')');
             return;
+          }
+          // A full label may also be inside the renderer: <mn>1</mn><mo>)</mo>.
+          // Require a prose document, a line boundary and exactly these two
+          // atoms. A closing fence inside an actual formula stays in math.
+          if (proseDocument && !lineHasMath && /(?:^|\n)\s*$/.test(pending)) {
+            const label = (format === 'latex' ? raw : xmlText(node)).trim().match(/^(\d+)\s*\)$/);
+            if (label) {
+              const body = format === 'latex' ? parseLatex(raw) : parseMathML(node);
+              if (body.t === 'row' && body.items.length === 2 && body.items[0].t === 'number'
+                  && body.items[0].v === label[1] && body.items[1].t === 'symbol' && body.items[1].v === ')') {
+                append(`${label[1]})`);
+                return;
+              }
+            }
           }
           flush(); segments.push({ format, raw }); lineHasMath = true;
         };

@@ -27,7 +27,15 @@ const splitNumberedQuestion = {
 module.exports = {
   numberedQuestion,
   splitNumberedQuestion,
+  logicNumberedQuestion: require('node:fs').readFileSync(require('node:path').join(__dirname, 'fixtures/logic-numbered-mathml-question.html'), 'utf8'),
   equal: [
+    ['1) $P\\Rightarrow Q$', `<p>${m('<mn>1</mn><mo stretchy="false">)</mo>')} ${m('<mi>P</mi><mo>⇒</mo><mi>Q</mi>')}</p>`],
+    ['$1)$ $P\\Rightarrow Q$', '1) P⇒Q'],
+    ['<p><script type="math/tex">1)</script> <script type="math/tex">P\\Rightarrow Q</script></p>', '1) P⇒Q'],
+    ['2) $Q\\Rightarrow P$\n3) $P\\Leftrightarrow Q$', `<p>${m('<mrow><mn>2</mn><mo>)</mo></mrow>')} ${m('<mi>Q</mi><mo>⇒</mo><mi>P</mi>')}<br>${m('<mn>3</mn><mo>)</mo>')} ${m('<mi>P</mi><mo>⇔</mo><mi>Q</mi>')}</p>`],
+    ['$P\\Rightarrow Q$', 'P⇒Q'],
+    ['$P\\Leftrightarrow Q$', 'P⇔Q'],
+    ['Nếu P⇒Q thì xét tiếp.', `<p>Nếu ${m('<mi>P</mi><mo>⇒</mo><mi>Q</mi>')} thì xét tiếp.</p>`],
     [splitNumberedQuestion.latex, splitNumberedQuestion.html],
     ['1 \\( ) \\) $x+1=0$', '<p>1 <math><mo>)</mo></math> <math><mi>x</mi><mo>+</mo><mn>1</mn><mo>=</mo><mn>0</mn></math></p>'],
     ['$f^{\\prime\\prime}$', m('<msup><mi>f</mi><mo>″</mo></msup>')],
@@ -76,6 +84,7 @@ module.exports = {
     ['$x^{12}$', '<m:math xmlns:m="http://www.w3.org/1998/Math/MathML"><m:msup><m:mi>x</m:mi><m:mn>12</m:mn></m:msup></m:math>']
   ],
   different: [
+    ['P⇒Q', 'Q⇒P'], ['P⇒Q', 'P⇔Q'], ['1) P⇒Q', '2) P⇒Q'],
     ['f′', 'f″'], ['f″', 'f²'], ['$\'\'x$', '$x\'\'$'],
     ['1) $x+1=0$', '2) $x+1=0$'],
     ['1) $x+1=0$', '1) $x-1=0$'],
@@ -90,5 +99,5 @@ module.exports = {
     [m('<mi>x</mi><mo>&#x2064;</mo><mi>y</mi>'), '$xy$']
   ],
   unsupported: ['$\\unknown{x}$', m('<menclose notation="circle"><mi>x</mi></menclose>'), '$\\begin{unknown}x\\end{unknown}$', m('<mfrac linethickness="0"><mn>1</mn><mn>2</mn></mfrac>')],
-  incomplete: ['$x+2', '\\(x+2', '$\\frac{1}$', '$\\frac{}{2}$', '<math><mi>x</mi>', '<mjx-container><svg></svg></mjx-container>', '$1)x+1=0$', '$x+1)$', 'x+1)', '<math><mn>1</mn><mo>)</mo><mi>x</mi></math>', '1) $x+1)$', '$x^(2)$', '$(x+y^2$', '<p><math><mi>x</mi></math> 1 <math><mo>)</mo></math></p>']
+  incomplete: ['$x+2', '\\(x+2', '$\\frac{1}$', '$\\frac{}{2}$', '<math><mi>x</mi>', '<mjx-container><svg></svg></mjx-container>', '$1)x+1=0$', '$x+1)$', 'x+1)', '<math><mn>1</mn><mo>)</mo><mi>x</mi></math>', '1) $x+1)$', '$x^(2)$', '$(x+y^2$', '<p><math><mi>x</mi></math> 1 <math><mo>)</mo></math></p>', '$1)$', '<math><mn>1</mn><mo>)</mo></math>', '<p><math><mi>x</mi></math><math><mn>1</mn><mo>)</mo></math></p>']
 };

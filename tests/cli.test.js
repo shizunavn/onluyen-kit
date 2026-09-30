@@ -110,6 +110,15 @@ for (const source of Object.values(require('./math-cases').splitNumberedQuestion
   assert.match(prompt, /1\) ″2x\+1/);
   assert.match(prompt, /6\) ″2x-1≤7″/);
 }
+const logicShortQuestion = parseApiQuestions([{ dataStandard: {
+  stepIndex: 25, numberQuestion: 9026, typeAnswer: 2,
+  languagesData: { vi: { content: require('./math-cases').logicNumberedQuestion } }
+} }]);
+const logicPrompt = buildPrompt(logicShortQuestion);
+assert.match(logicPrompt, /1\) P⇒Q;/);
+assert.match(logicPrompt, /2\) Q⇒P;/);
+assert.match(logicPrompt, /3\) P⇔Q;/);
+assert.match(logicPrompt, /4\) " P là điều kiện cần để có Q "/);
 const imageQuestions = parseApiQuestions([{ dataStandard: {
   stepIndex: 0, numberQuestion: 12905197, typeAnswer: 0,
   languagesData: { vi: { content: '<p>Chọn hình miền nghiệm.</p>', options: [
