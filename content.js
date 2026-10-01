@@ -39,6 +39,7 @@
   let examRevision = 0;
   let examRestore = Promise.resolve();
   let examSnapshot = null;
+  let examSnapshotContext = null;
   let examCollection = null;
   let collectionCancelled = false;
   let promptSnapshot = null;
@@ -67,6 +68,7 @@
     const revision = ++examRevision;
     stopAutoBot();
     examSnapshot = null;
+    examSnapshotContext = null;
     promptSnapshot = null;
     databaseValidation = null;
     lastMatchReport = null;
@@ -104,6 +106,7 @@
       window.__ONLUYEN_RAW_DATA_SCORE__ = nextScore;
       console.log(`📦 [OnluyenBot] Đã đồng bộ ${nextPayload.questions?.length || 0} câu (độ đầy đủ ${nextScore}).`);
       const parsedQuestions = parseQuestionsFromRawAPI() || [];
+      refreshExamSnapshot(false);
       const completeQuestions = parsedQuestions.filter(question =>
         question.prompt && (question.answerType === 'SHORT' || question.choices.length)
       );
@@ -514,16 +517,53 @@
     return Math.max(sidebarQuestionNumbers().length, window.__ONLUYEN_RAW_DATA__?.questions?.length || 0, questions.length);
   }
 
+  function examSourceContext() {
+    const questions = parseQuestionsFromRawAPI() || [];
+    return JSON.stringify({ revision: examRevision, key: examStorageKey(),
+      sidebar: sidebarQuestionNumbers(), total: window.__ONLUYEN_RAW_DATA__?.questions?.length || 0,
+      api: questions.map(q => ({ number: q.number, id: q.sourceId, type: q.answerType,
+        prompt: q.math_content?.question || q.prompt, expectedChoiceCount: q.expectedChoiceCount,
+        images: (q.images || []).map(i => i.src),
+        choices: q.choices.map(c => ({ label: c.label, id: c.idOption,
+          content: c.math_content || c.text, images: (c.images || []).map(i => i.src) })) })) });
+  }
+
+  function sameRenderedQuestion(expected, current) {
+    if (!expected || !current || !hasCompleteChoices(current)) return false;
+    const enriched = { ...current, choices: current.choices.map(c => ({ ...c,
+      idOption: c.idOption ?? expected.choices.find(e => e.label === c.label)?.idOption })) };
+    return math.signature([expected]) === math.signature([enriched]);
+  }
+
+  function invalidateExamSnapshot() {
+    examSnapshot = null;
+    examSnapshotContext = null;
+    databaseValidation = null;
+  }
+
+  function refreshExamSnapshot(checkRendered = true) {
+    if (!examSnapshot) return;
+    const current = checkRendered ? extractStructuredTestQuestions() : [];
+    if (examSnapshotContext !== examSourceContext() || current.some(q =>
+      !sameRenderedQuestion(examSnapshot.find(e => e.number === q.number), q))) invalidateExamSnapshot();
+  }
+
   async function getCompleteExamQuestions() {
     if (examCollection) return examCollection;
     examCollection = (async () => {
+      refreshExamSnapshot();
+      const sourceContext = examSourceContext();
       const questions = getFullExamQuestions();
       if (!window.__ONLUYEN_RAW_DATA__?.questions?.length && !sidebarQuestionNumbers().length
           && (/^\/practices(?:\/|$)/.test(location.pathname) || document.querySelector('app-practice-step-question-option, app-practice-step-question-true-false'))) {
         throw new Error('Không thể đọc trước toàn bộ đề luyện tập: không có API đầy đủ hoặc thanh điều hướng.');
       }
       const expected = expectedExamTotal(questions);
-      if (questions.length === expected && questions.length && questions.every(hasCompleteChoices)) return questions;
+      if (questions.length === expected && questions.length && questions.every(hasCompleteChoices)) {
+        examSnapshot = questions;
+        examSnapshotContext = sourceContext;
+        return questions;
+      }
       if (window.__BOT_RUNNING__) throw new Error('Hãy dừng bot trước khi đọc lại các phương án từ giao diện.');
       collectionCancelled = false;
       const revision = examRevision;
@@ -577,7 +617,9 @@
         }
         checkContext();
         if (collected.length < expected) throw new Error('Chưa đọc đủ số câu của đề. Hãy chờ phiếu trả lời tải xong rồi thử lại.');
+        if (sourceContext !== examSourceContext()) throw new Error('Nguồn đề đã thay đổi trong khi đọc. Hãy kiểm tra lại.');
         examSnapshot = collected;
+        examSnapshotContext = sourceContext;
         return collected;
       } finally {
         if (revision === examRevision && key === examStorageKey() && originalNumber && currentQuestionNumber() !== originalNumber) {
@@ -1525,19 +1567,18 @@
   function assertValidatedQuestion(number) {
     const expected = databaseValidation?.questions.find(q => q.number === number);
     const current = extractStructuredTestQuestions().find(q => q.number === number);
-    if (expected && current) {
-      current.choices = current.choices.map(c => ({ ...c, idOption: c.idOption ?? expected.choices.find(e => e.label === c.label)?.idOption }));
-    }
     if (!databaseValidation || databaseValidation.revision !== examRevision || databaseValidation.key !== activeExamKey
-        || !expected || !current || math.signature([expected]) !== math.signature([current])) {
-      databaseValidation = null;
+        || databaseValidation.sourceContext !== examSnapshotContext
+        || databaseValidation.questions.length !== expectedExamTotal(databaseValidation.questions)
+        || !sameRenderedQuestion(expected, current)) {
+      invalidateExamSnapshot();
       const issue = { number, id: current?.sourceId || null, status: 'different', code: 'PAGE_CHANGED', reason: 'Nội dung/ID/lựa chọn đã thay đổi sau kiểm tra. Hãy kiểm tra lại toàn bộ đề.', source: [] };
       lastMatchReport = math.matchReport({ ok: false, count: 0, issues: [issue] });
       throw matchFailure(lastMatchReport);
     }
   }
 
-  async function validateDatabase(inputJson, commit = false) {
+  async function validateDatabase(inputJson, commit = false, forceRefresh = false) {
     if (preflightRunning || window.__BOT_RUNNING__) throw new Error('Đang đọc đề hoặc chạy bot; hãy dừng trước khi kiểm tra lại.');
     const items = databaseItems(inputJson);
     if (!items.length && commit) {
@@ -1550,8 +1591,18 @@
     validationCancelled = false;
     const revision = examRevision, key = activeExamKey;
     try {
-      examSnapshot = null;
+      if (forceRefresh) invalidateExamSnapshot();
+      else refreshExamSnapshot();
+      const inputKey = JSON.stringify(items);
+      if (commit && databaseValidation && databaseValidation.revision === revision && databaseValidation.key === key
+          && databaseValidation.sourceContext === examSourceContext()
+          && [databaseValidation.inputKey, databaseValidation.exportKey].includes(inputKey)) {
+        lastMatchReport = databaseValidation.report;
+        return { ok: true, count: window.__ONLUYEN_DATABASE_EXPORT__.length, report: lastMatchReport,
+          answers: window.__ONLUYEN_DATABASE_EXPORT__, json: databaseExportJson(), reused: true };
+      }
       const questions = await getCompleteExamQuestions();
+      const sourceContext = examSnapshotContext;
       if (validationCancelled || revision !== examRevision || key !== examStorageKey()) throw new Error('Đã hủy kiểm tra hoặc chuyển bài; database trước đó được giữ nguyên.');
       const activeSnapshot = promptSnapshot && promptSnapshot.revision === revision && promptSnapshot.key === key ? promptSnapshot : null;
       const validation = math.validateExam(questions, items, { expectedTotal: expectedExamTotal(questions), snapshotId: activeSnapshot?.id, snapshotSignature: activeSnapshot?.signature });
@@ -1576,8 +1627,11 @@
         try {
           await persistExamDatabase(key);
           if (validationCancelled || revision !== examRevision || key !== examStorageKey()) throw new Error('Đã hủy kiểm tra hoặc chuyển bài trong khi lưu.');
+          if (sourceContext !== examSourceContext()) throw Object.assign(new Error('Nguồn đề đã thay đổi trong khi lưu. Hãy kiểm tra lại.'), { code: 'PAGE_CHANGED' });
           stagedDatabaseInput = null;
-          databaseValidation = { revision, key, signature: math.signature(questions), questions };
+          databaseValidation = { revision, key, signature: math.signature(questions), questions,
+            sourceContext, inputKey,
+            exportKey: JSON.stringify(databaseItems(databaseExportJson())), report: lastMatchReport };
         } catch (error) {
           if (revision === examRevision && key === activeExamKey) {
             window.__ONLUYEN_DATABASE__ = previous.data;
@@ -1587,7 +1641,7 @@
             stagedDatabaseInput = previous.staged; databaseValidation = previous.validation;
           }
           try { await persistExamDatabase(key, previous.json); } catch (_storageError) { /* Keep the previous in-memory state even if storage is unavailable. */ }
-          throw Object.assign(error, { code: validationCancelled ? 'CANCELLED' : 'STORAGE_ERROR' });
+          throw Object.assign(error, { code: validationCancelled ? 'CANCELLED' : error.code || 'STORAGE_ERROR' });
         }
       }
       return { ok: true, count: validation.count, report: lastMatchReport, answers: window.__ONLUYEN_DATABASE_EXPORT__, json: databaseExportJson() };
@@ -2118,7 +2172,7 @@
       return true;
     }
     if (message?.action === 'OL_VALIDATE_DATABASE') {
-      validateDatabase(message.json || stagedDatabaseInput || databaseExportJson()).then(sendResponse).catch(err => sendResponse({ ok: false, error: err.message, report: err.report }));
+      validateDatabase(message.json || stagedDatabaseInput || databaseExportJson(), false, true).then(sendResponse).catch(err => sendResponse({ ok: false, error: err.message, report: err.report }));
       return true;
     }
     if (message?.action === 'OL_GET_MATCH_REPORT') {
@@ -2136,11 +2190,11 @@
       const failed = err => {
         if (botRevision === examRevision) chrome.runtime.sendMessage({ action: 'BOT_ERROR', error: err.message, report: err.report }).catch(() => {});
       };
-      validateDatabase(stagedDatabaseInput || databaseExportJson(), true).then(result => {
+      validateDatabase(message.json || stagedDatabaseInput || databaseExportJson(), true).then(result => {
         if (!result.count) throw new Error('Database đáp án đang trống.');
         if (botRevision !== examRevision) throw new Error('Đã chuyển bài trong khi kiểm tra.');
         runAutoBot().catch(failed);
-        sendResponse({ ok: true, report: result.report });
+        sendResponse({ ok: true, report: result.report, json: result.json, reused: !!result.reused });
       }).catch(err => { failed(err); sendResponse({ ok: false, error: err.message, report: err.report }); });
       return true;
     }

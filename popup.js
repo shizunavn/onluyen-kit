@@ -93,7 +93,7 @@ async function currentOnluyenTab() {
   return tab;
 }
 
-async function sendToPage(message, timeoutMs = ['OL_CALL_AI_SOLVE', 'OL_GET_AI_PROMPT', 'OL_LOAD_DATABASE', 'OL_VALIDATE_DATABASE'].includes(message.action) ? 600000 : 15000) {
+async function sendToPage(message, timeoutMs = ['OL_CALL_AI_SOLVE', 'OL_GET_AI_PROMPT', 'OL_LOAD_DATABASE', 'OL_VALIDATE_DATABASE', 'OL_START_BOT'].includes(message.action) ? 600000 : 15000) {
   if (!state.tab?.id) throw new Error('Không tìm thấy tab Onluyen đang mở.');
   const tabId = state.tab.id;
   const examKey = state.status?.examKey;
@@ -283,17 +283,10 @@ $('btnStartBot').addEventListener('click', async () => {
     await updateBotStatus();
     $('progressBox').className = 'progress-box show';
     const databaseText = $('txtDatabase').value.trim();
-    if (databaseText) {
-      $('progressBox').textContent = '📥 Đang nạp JSON hiện tại trước khi chạy...';
-      const loaded = await sendToPage({ action: 'OL_LOAD_DATABASE', json: databaseText });
-      if (!loaded?.ok) throw new Error(loaded?.error || 'Lỗi nạp database.');
-      const normalizedJson = loaded.json || databaseText;
-      $('txtDatabase').value = normalizedJson;
-      await chrome.storage.local.set({ [savedDbStorageKey()]: normalizedJson });
-    }
-    $('progressBox').textContent = '🚀 Bắt đầu chạy bot tự động chọn đáp án...';
-    const res = await sendToPage({ action: 'OL_START_BOT' });
+    $('progressBox').textContent = '🚀 Đang xác minh và bắt đầu tự điền...';
+    const res = await sendToPage({ action: 'OL_START_BOT', ...(databaseText ? { json: databaseText } : {}) });
     if (!res?.ok) throw new Error(res?.error || 'Không thể khởi chạy bot.');
+    if (res.json) $('txtDatabase').value = res.json;
   } catch (e) {
     showProgressError(e);
   } finally {

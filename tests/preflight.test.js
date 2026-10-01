@@ -36,7 +36,7 @@ async function mount(browser) {
   await page.goto('https://app.onluyen.vn/school/test/step/preflight-fixture');
   await page.setContent('<div class="answer-sheet"><button class="option">1</button><button class="option">2</button></div><div id="test-step-question"><div class="question-container"></div></div>');
   await page.evaluate(first => {
-    window.__clicks = 0; window.__submits = 0; window.__messages = []; window.__store = {}; window.__mutate = false;
+    window.__clicks = 0; window.__submits = 0; window.__navigation = 0; window.__messages = []; window.__store = {}; window.__mutate = false;
     window.__texts = [[first, 'Lựa chọn khác.'], ['Đáp án cuối.', 'Sai khác.']];
     window.__render = n => {
       const root = document.querySelector('.question-container');
@@ -48,7 +48,7 @@ async function mount(browser) {
         __submits++; if (n === 1) __render(2); else root.querySelector('button').innerText = 'KẾT THÚC';
       });
     };
-    document.querySelectorAll('.answer-sheet button').forEach(b => b.addEventListener('click', () => setTimeout(() => __render(Number(b.innerText)), 50)));
+    document.querySelectorAll('.answer-sheet button').forEach(b => b.addEventListener('click', () => { __navigation++; setTimeout(() => __render(Number(b.innerText)), 50); }));
     __render(1);
     Element.prototype.scrollIntoView = () => {};
     window.chrome = {
@@ -69,6 +69,10 @@ const send = (page, payload) => page.evaluate(p => new Promise(resolve => __list
     const answers = [entry, { cau: 2, id: '9999', loai: 'MCQ', dap_an: 'A', noi_dung_dap_an: 'Đáp án cuối.' }];
     const loaded = await send(page, { action: 'OL_LOAD_DATABASE', json: answers });
     assert.equal(loaded.ok, true, loaded.error);
+    const firstScanNavigation = await page.evaluate(() => __navigation);
+    assert.equal(firstScanNavigation, 2, 'One scan visits question 2 and restores question 1');
+    const duplicate = await send(page, { action: 'OL_LOAD_DATABASE', json: loaded.json });
+    assert.equal(duplicate.reused, true, 'Normalized JSON reuses its successful validation');
     assert.deepEqual(await page.evaluate(() => [__clicks, __submits]), [0, 0], 'Full collection may navigate, but cannot answer');
     assert.equal(await page.$eval('.question-info .num', el => el.textContent.split('#')[0].trim()), 'Câu: 1');
     const invalid = answers.map((e, i) => i ? { ...e, noi_dung_dap_an: 'Sai đáp án cuối.' } : e);
@@ -83,10 +87,44 @@ const send = (page, payload) => page.evaluate(p => new Promise(resolve => __list
     await page.evaluate(() => { window.__mutate = true; });
     const started = await send(page, { action: 'OL_START_BOT' });
     assert.equal(started.ok, true, started.error);
+    assert.equal(started.reused, true);
+    assert.equal(await page.evaluate(() => __navigation), firstScanNavigation, 'Load, failed import and Start do not repeat the full scan');
     await page.waitForFunction(() => !window.__BOT_RUNNING__);
     assert.deepEqual(await page.evaluate(() => [__clicks, __submits]), [0, 0], 'Change after preflight invalidates before any answer click');
     assert.match(await page.evaluate(() => __messages.find(m => m.action === 'BOT_ERROR').error), /thay đổi sau kiểm tra/);
     await page.close();
+
+    const directStart = await mount(browser);
+    const direct = await send(directStart, { action: 'OL_START_BOT', json: answers });
+    assert.equal(direct.ok, true, direct.error);
+    await directStart.waitForFunction(() => !window.__BOT_RUNNING__);
+    assert.deepEqual(await directStart.evaluate(() => [__navigation, __clicks, __submits]), [2, 2, 2], 'Starting with new JSON scans once, then fills each answer');
+    await directStart.close();
+
+    const promptReuse = await mount(browser);
+    assert.equal((await send(promptReuse, { action: 'OL_GET_AI_PROMPT' })).ok, true);
+    const fromPrompt = await send(promptReuse, { action: 'OL_LOAD_DATABASE', json: answers });
+    assert.equal(fromPrompt.ok, true, fromPrompt.error);
+    assert.equal(await promptReuse.evaluate(() => __navigation), 2, 'Import reuses the complete exam collected for the prompt');
+    const freshCheck = await send(promptReuse, { action: 'OL_VALIDATE_DATABASE', json: answers });
+    assert.equal(freshCheck.ok, true, freshCheck.error);
+    assert.equal(await promptReuse.evaluate(() => __navigation), 4, 'Explicit whole-exam check always refreshes every question');
+    await promptReuse.close();
+
+    const changed = await mount(browser);
+    const beforeChange = await send(changed, { action: 'OL_LOAD_DATABASE', json: answers });
+    assert.equal(beforeChange.ok, true, beforeChange.error);
+    await changed.evaluate(() => {
+      __texts[1][0] = 'Đáp án cuối đã đổi.';
+      window.postMessage({ type: 'ONLUYEN_RAW_TEST_DATA', payload: { questions: [{}] } }, '*');
+    });
+    await changed.waitForFunction(() => __messages.some(m => m.action === 'OL_BADGE'));
+    const changedStart = await send(changed, { action: 'OL_START_BOT', json: beforeChange.json });
+    assert.equal(changedStart.ok, false, changedStart.error);
+    assert.ok(changedStart.report.issues.some(i => i.number === 2));
+    assert.deepEqual(await changed.evaluate(() => [__navigation, __clicks, __submits]), [4, 0, 0], 'API update invalidates the snapshot; an error on the last question blocks all answers');
+    assert.equal(await changed.evaluate(() => __store['onluyen_saved_db:preflight-fixture']), beforeChange.json);
+    await changed.close();
 
     const partial = await mount(browser);
     await partial.evaluate(() => {
@@ -102,7 +140,7 @@ const send = (page, payload) => page.evaluate(p => new Promise(resolve => __list
     const original = await send(storageFailure, { action: 'OL_LOAD_DATABASE', json: answers });
     assert.equal(original.ok, true, original.error);
     await storageFailure.evaluate(() => { chrome.storage.local.set = () => { throw new Error('Storage write failed'); }; });
-    const failedWrite = await send(storageFailure, { action: 'OL_LOAD_DATABASE', json: answers });
+    const failedWrite = await send(storageFailure, { action: 'OL_LOAD_DATABASE', json: answers.map(e => ({ ...e, note: 'New import' })) });
     assert.equal(failedWrite.ok, false);
     assert.equal(failedWrite.report.issues[0].code, 'STORAGE_ERROR');
     assert.equal((await send(storageFailure, { action: 'OL_PING' })).databaseJson, original.json);
@@ -114,6 +152,9 @@ const send = (page, payload) => page.evaluate(p => new Promise(resolve => __list
       assert.equal(initial.ok, true, initial.error);
       await pending.evaluate(() => {
         __messages = [];
+        // A changed visible choice makes the previous snapshot unusable.
+        __texts[0][1] = 'Lựa chọn vừa thay đổi.';
+        __render(1);
         const button = document.querySelectorAll('.answer-sheet button')[1];
         const clone = button.cloneNode(true); button.replaceWith(clone);
         clone.addEventListener('click', () => setTimeout(() => __render(2), 600));

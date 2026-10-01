@@ -227,7 +227,7 @@ function trueFalseRow(key, text, token) {
           query: async () => [{ id: 1, url: `https://app.onluyen.vn/school/test/step/${window.__popupExam}` }],
           sendMessage: async (_tab, message) => {
             window.__popupActions.push(message.action);
-            if (message.action === 'OL_LOAD_DATABASE') {
+            if (message.action === 'OL_LOAD_DATABASE' || message.action === 'OL_START_BOT') {
               if (window.__popupSilent) return new Promise(() => {});
               return { ok: false, error: 'Câu 6: Database cũ có thể đã mất cấu trúc; hãy lấy lại từ đề/History' };
             }
@@ -266,7 +266,7 @@ function trueFalseRow(key, text, token) {
     await popupPage.evaluate(() => updateBotStatus());
     assert.match(await popupPage.$eval('#progressBox', el => el.textContent), /❌.*Câu 6/);
     assert.equal(await popupPage.$eval('#btnStartBot', el => el.disabled), false);
-    assert.deepEqual(await popupPage.evaluate(() => ({ starts: __popupActions.filter(a => a === 'OL_START_BOT'), saves: __popupSaves })), { starts: [], saves: [] });
+    assert.deepEqual(await popupPage.evaluate(() => ({ starts: __popupActions.filter(a => a === 'OL_START_BOT'), loads: __popupActions.filter(a => a === 'OL_LOAD_DATABASE'), saves: __popupSaves })), { starts: ['OL_START_BOT'], loads: [], saves: [] }, 'Start sends JSON once, with no separate load or duplicate cache write');
     await popupPage.evaluate(() => { document.getElementById('btnSaveDb').click(); });
     await popupPage.waitForFunction(() => !document.getElementById('btnSaveDb').disabled);
     assert.match(await popupPage.$eval('#progressBox', el => el.textContent), /❌.*Câu 6/);
