@@ -36,6 +36,8 @@ The reader supports common operators, relations, fractions, roots, scripts, sets
 
 Canonical version 2 uses a token stream independent of text/math renderer boundaries. Standalone integers, single-letter variables and capital names of one to three letters (such as triangle `ABC`) compare across prose, LaTeX and MathML. Word whitespace and terminal sentence periods normalize; internal punctuation stays significant. Separate numeric atoms never concatenate. Commas in ambiguous prose are not guessed to be decimal points. Fractions, scripts, accents, roots and tables stay structural atoms; source metadata remains version 1.
 
+Valid `day/month/year` dates following a prose date introducer (`ngày`, `date`, `dated`, `on`) remain text, including their slashes. This rule applies before inferring compact formulas from un-delimited prose. It does not apply to explicit LaTeX/MathML or bare slash expressions: `1/2/3` still reports ambiguous division. Date components remain significant when comparing contents.
+
 `compare` adds optional `code` and `diagnostic` fields with the first differing token. Whole-exam reports distinguish missing answers, incomplete exams, unavailable rendering, unsupported syntax, multiple matches, conflicting IDs, expired snapshots and changed page content. Source segments in a report are restricted to the relevant question/answer and capped at 8192 characters each.
 
 Positional MCQ/TF answers need the `snapshot_id` emitted by the current prompt and an unchanged original signature. Answer contents and valid IDs still match without that token. Validation is atomic: incomplete or failed imports do not replace the current database, and auto-fill rechecks the live question before each selection and answer button.

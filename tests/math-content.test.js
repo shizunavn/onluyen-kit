@@ -29,6 +29,19 @@ cases.different.push(['1/2x+5/2', '$\\frac{1}{2x}+\\frac{5}{2}$']);
 cases.different.push([prosePrefix + 'y=2/1x+5/2' + proseSuffix, prosePrefix + fractionFormula + proseSuffix]);
 cases.different.push([prosePrefix + 'y=1/2x+5/2 (bao gồm đường thẳng).', prosePrefix + fractionFormula + proseSuffix]);
 cases.unsupported.push('1/2/3', '1/2^3');
+const dateQuestionHtml = fs.readFileSync(path.join(__dirname, 'fixtures/vaccination-date-question.html'), 'utf8');
+const dateQuestionText = 'Điền đáp án thích hợp vào ô trống (chỉ sử dụng chữ số, dấu "," và dấu "-") Ngày 18/12/2021, một số trung tâm y tế được phân phát vacxin tiêm phòng Covid-19. Có 3 loại vacxin: Vero cell, AstraZeneca, và Pfizer. Trong 140 trung tâm y tế, có 7 trung tâm được phân phát cả 3 loại, 34 trung tâm được phát Vero Cell và AstraZeneca, 22 trung tâm được phát Vero Cell và Pfizer, 19 trung tâm được phát AstraZeneca và Pfizer, 76 trung tâm được phát Vero Cell, 62 trung tâm được phát AstraZeneca và 46 trung tâm được phát Pfizer. Có bao nhiêu trung tâm y tế không được nhận bất kỳ loại vacxin nào? Đáp án:';
+cases.equal.push([dateQuestionHtml, dateQuestionText]);
+cases.equal.push(['Ngày 18/12/2021, nhận vacxin.', '<div>Ngày <span>18&#47;12&#47;2021</span>, nhận vacxin.</div>']);
+cases.equal.push(['Ngày 18 / 12 / 2021, tỉ lệ x=1/2.', 'Ngày 18/12/2021, tỉ lệ $x=\\frac{1}{2}$.']);
+cases.equal.push(['Ngày: 29/02/2020.', '<p>Ngày: 29/02/2020.</p>']);
+cases.equal.push(['Dated 18/12/2021.', '<p>Dated 18/12/2021.</p>']);
+cases.different.push([dateQuestionHtml, dateQuestionHtml.replace('18/12/2021', '19/12/2021')]);
+cases.different.push(['Ngày 18/12/2021.', 'Ngày 18/11/2021.']);
+cases.different.push(['Ngày 18/12/2021.', 'Ngày 18/12/2022.']);
+cases.unsupported.push('18/12/2021', 'Ngày $18/12/2021$.', 'Ngày 18/12/2021, tỉ lệ 1/2/3.', 'Tỉ số 18/12/2021.', 'Ngày 29/02/2021.');
+assert.equal(math.canonicalize(dateQuestionHtml).status, 'ok', 'User-provided vaccination HTML must remain readable');
+assert.ok(math.readContent(dateQuestionHtml).segments.some(s => s.format === 'text' && s.raw.includes('18/12/2021')), 'Retain date text and slashes instead of inventing fraction structure');
 // Renderer transformations should preserve a whole mixed sentence, not merely
 // a formula tested in isolation. These cases also run unchanged in the browser.
 for (let n = 1; n <= 12; n++) {

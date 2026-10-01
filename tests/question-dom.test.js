@@ -103,6 +103,29 @@ function trueFalseRow(key, text, token) {
   const browser = await puppeteer.launch({ executablePath, headless: true });
 
   try {
+    const dateHtml = fs.readFileSync(path.join(__dirname, 'fixtures/vaccination-date-question.html'), 'utf8');
+    // The question body is supplied by the user; only the outer test ID/header
+    // is synthetic, because their pasted fragment does not contain an ID.
+    const datePage = await mount(browser, `<div id="test-step-question"><div class="question-container">
+      <div class="question-info"><div class="num">Câu: 6 <span>#9006</span></div></div>
+      ${dateHtml}<div class="submit-bar"><button>BỎ QUA</button></div>
+    </div></div>`);
+    const dateDomPrompt = await send(datePage, { action: 'OL_GET_AI_PROMPT' });
+    assert.equal(dateDomPrompt.ok, true, dateDomPrompt.error);
+    assert.match(dateDomPrompt.prompt, /Ngày 18\/12\/2021, một số trung tâm y tế/);
+    assert.match(dateDomPrompt.prompt, /Có bao nhiêu trung tâm y tế không được nhận/);
+    assert.equal(await datePage.$eval('#mathplay-answer-1', el => el.value), '', 'Reading the prompt never enters an answer');
+    await datePage.evaluate(content => {
+      window.__ONLUYEN_RAW_DATA__ = { questions: [{ dataStandard: {
+        numberQuestion: 9006, stepIndex: 5, typeAnswer: 2,
+        languagesData: { vi: { content } }
+      } }] };
+    }, dateHtml);
+    const dateApiPrompt = await send(datePage, { action: 'OL_GET_AI_PROMPT' });
+    assert.equal(dateApiPrompt.ok, true, dateApiPrompt.error);
+    assert.match(dateApiPrompt.prompt, /Ngày 18\/12\/2021, một số trung tâm y tế/);
+    await datePage.close();
+
     const numberedQuestion = require('./math-cases').numberedQuestion;
     const numberedPage = await mount(browser, `
       <div id="test-step-question"><div class="question-container">

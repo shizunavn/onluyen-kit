@@ -381,6 +381,18 @@
     if (!/[\p{L}\p{N}]/u.test(s)) return false;
     return /^[\dA-Za-zα-ωΑ-Ω\s+\-−–=<>^_()[\]{},;.:|/×·]+$/u.test(s) && !/[A-Za-z]{4,}/.test(s);
   }
+  function isProseDate(value, prefix) {
+    // A date introducer gives slash-separated calendar components a textual
+    // meaning. Explicit math sources and bare chained divisions stay strict.
+    if (!/(?:^|[^\p{L}\p{N}_])(?:ngày|date|dated|on)\s*:?\s*$/iu.test(prefix)) return false;
+    const match = value.match(/^(\d{1,2})\s*\/\s*(\d{1,2})\s*\/\s*(\d{4})$/);
+    if (!match) return false;
+    const [day, month, year] = match.slice(1).map(Number);
+    if (year < 1 || month < 1 || month > 12) return false;
+    const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+    const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    return day >= 1 && day <= days[month - 1];
+  }
   function splitPlain(value, segments, prose = false) {
     let s = decode(value).trim();
     if (!s) return;
@@ -432,6 +444,7 @@
       for (const match of s.matchAll(inline)) {
         if (/\p{L}/u.test(s[match.index - 1] || '') || /\p{L}/u.test(s[match.index + match[0].length] || '')) continue;
         const formula = match[0].replace(/[.,]$/, '');
+        if (isProseDate(formula, s.slice(0, match.index))) continue;
         if (!looksMath(formula) || !/[=<>≤≥⩽⩾⇒⇔→←+\-−/^_√²³⁰¹⁴⁵⁶⁷⁸⁹₀-₉′″‴;]|^\([\d,]+\)$/u.test(formula)) continue;
         if (match.index > offset) segments.push({ format: 'text', raw: s.slice(offset, match.index) });
         segments.push({ format: 'plain', raw: formula });
