@@ -93,7 +93,7 @@ async function currentOnluyenTab() {
   return tab;
 }
 
-async function sendToPage(message, timeoutMs = ['OL_CALL_AI_SOLVE', 'OL_GET_AI_PROMPT'].includes(message.action) ? 600000 : 15000) {
+async function sendToPage(message, timeoutMs = ['OL_CALL_AI_SOLVE', 'OL_GET_AI_PROMPT', 'OL_LOAD_DATABASE', 'OL_VALIDATE_DATABASE'].includes(message.action) ? 600000 : 15000) {
   if (!state.tab?.id) throw new Error('Không tìm thấy tab Onluyen đang mở.');
   const tabId = state.tab.id;
   const examKey = state.status?.examKey;
@@ -309,6 +309,27 @@ $('btnStopBot').addEventListener('click', async () => {
   } catch (e) {
     showMessage(e.message, 'error');
   }
+});
+
+$('btnValidateDb').addEventListener('click', async () => {
+  setBusy(true);
+  try {
+    await updateBotStatus();
+    $('progressBox').className = 'progress-box show';
+    $('progressBox').textContent = 'Đang đọc và kiểm tra toàn bộ đề...';
+    const result = await sendToPage({ action: 'OL_VALIDATE_DATABASE', json: $('txtDatabase').value.trim() || undefined });
+    if (!result?.ok) throw new Error(result?.error || 'Kiểm tra thất bại.');
+    $('progressBox').textContent = `Đã kiểm tra đủ ${result.count} câu. Có thể tự điền.`;
+  } catch (error) { showProgressError(error); }
+  finally { setBusy(false); }
+});
+
+$('btnMatchReport').addEventListener('click', async () => {
+  try {
+    const result = await sendToPage({ action: 'OL_GET_MATCH_REPORT' });
+    if (!result?.ok) throw new Error(result?.error || 'Chưa có báo cáo.');
+    await download('onluyen-match-report.json', JSON.stringify(result.report, null, 2), 'application/json;charset=utf-8');
+  } catch (error) { showMessage(error.message, 'error'); }
 });
 
 // Lắng nghe thông báo tiến độ từ content script

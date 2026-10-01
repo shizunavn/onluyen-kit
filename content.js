@@ -41,14 +41,19 @@
   let examSnapshot = null;
   let examCollection = null;
   let collectionCancelled = false;
+  let promptSnapshot = null;
+  let lastMatchReport = null;
+  let databaseValidation = null;
+  let stagedDatabaseInput = null;
+  let preflightRunning = false;
+  let validationCancelled = false;
 
   function restoreExamDatabase(key, revision) {
     return new Promise(resolve => {
       if (!key) return resolve();
       chrome.storage.local.get([key], saved => {
         if (revision === examRevision && key === examStorageKey()) {
-          try { parseAndLoadDatabase(saved[key] || '[]'); }
-          catch (_error) { parseAndLoadDatabase([]); }
+          stagedDatabaseInput = saved[key] || null;
         }
         resolve();
       });
@@ -62,6 +67,10 @@
     const revision = ++examRevision;
     stopAutoBot();
     examSnapshot = null;
+    promptSnapshot = null;
+    databaseValidation = null;
+    lastMatchReport = null;
+    stagedDatabaseInput = null;
     window.__ONLUYEN_RAW_DATA__ = null;
     window.__ONLUYEN_RAW_DATA_SCORE__ = 0;
     parseAndLoadDatabase([]);
@@ -69,8 +78,8 @@
     return examRestore;
   }
 
-  function persistExamDatabase() {
-    if (activeExamKey) chrome.storage.local.set({ [activeExamKey]: databaseExportJson() });
+  function persistExamDatabase(key = activeExamKey, json = databaseExportJson()) {
+    return key ? chrome.storage.local.set({ [key]: json }) : Promise.resolve();
   }
 
   function rawDataScore(payload) {
@@ -496,18 +505,32 @@
       && question.choices.every(choice => choice.text || choice.images?.length));
   }
 
+  function sidebarQuestionNumbers() {
+    return [...new Set([...document.querySelectorAll('.answer-sheet .option, app-sidebar-school-test .option, [class*="sidebar"] span, [class*="sidebar"] button')]
+      .filter(isVisible).map(el => cleanText(el.innerText)).filter(t => /^\d+$/.test(t)).map(Number))].sort((a, b) => a - b);
+  }
+
+  function expectedExamTotal(questions) {
+    return Math.max(sidebarQuestionNumbers().length, window.__ONLUYEN_RAW_DATA__?.questions?.length || 0, questions.length);
+  }
+
   async function getCompleteExamQuestions() {
     if (examCollection) return examCollection;
     examCollection = (async () => {
       const questions = getFullExamQuestions();
-      if (!questions.length || questions.every(hasCompleteChoices)) return questions;
+      if (!window.__ONLUYEN_RAW_DATA__?.questions?.length && !sidebarQuestionNumbers().length
+          && (/^\/practices(?:\/|$)/.test(location.pathname) || document.querySelector('app-practice-step-question-option, app-practice-step-question-true-false'))) {
+        throw new Error('Không thể đọc trước toàn bộ đề luyện tập: không có API đầy đủ hoặc thanh điều hướng.');
+      }
+      const expected = expectedExamTotal(questions);
+      if (questions.length === expected && questions.length && questions.every(hasCompleteChoices)) return questions;
       if (window.__BOT_RUNNING__) throw new Error('Hãy dừng bot trước khi đọc lại các phương án từ giao diện.');
       collectionCancelled = false;
       const revision = examRevision;
       const key = activeExamKey;
       const originalNumber = currentQuestionNumber();
-      const sidebarNumbers = [...new Set([...document.querySelectorAll('.answer-sheet .option, app-sidebar-school-test .option, [class*="sidebar"] span, [class*="sidebar"] button')]
-        .filter(isVisible).map(el => cleanText(el.innerText)).filter(text => /^\d+$/.test(text)).map(Number))].sort((a, b) => a - b);
+      const sidebarNumbers = sidebarQuestionNumbers();
+      if (expected > questions.length && !sidebarNumbers.length) throw new Error('Không thể đọc trước toàn bộ đề: API thiếu câu và trang không có thanh điều hướng.');
       const targets = sidebarNumbers.length ? sidebarNumbers : questions.map(question => question.number);
       const collected = [];
       const completeDomQuestion = question => {
@@ -546,12 +569,14 @@
           if (ready) await sleep(200);
           checkContext();
           const current = extractStructuredTestQuestions().find(question => question.number === number);
-          if (!ready || !completeDomQuestion(current)) throw new Error(`Câu ${number}: chưa đọc đủ phương án; không tạo prompt bị mất A/B/C/D.`);
-          if (current.sourceId && collected.some(question => question.sourceId === current.sourceId)) throw new Error(`Câu ${number}: ID câu bị lặp trong khi đọc đề.`);
+          if (!ready || !completeDomQuestion(current)) {
+            collected.push({ number, sourceId: current?.sourceId || null, answerType: current?.answerType || 'MCQ', prompt: current?.prompt || '', choices: [], readError: `Câu ${number}: chưa đọc đủ phương án.` });
+            continue;
+          }
           collected.push(current);
         }
         checkContext();
-        if (collected.length < questions.length) throw new Error('Chưa đọc đủ số câu của đề. Hãy chờ phiếu trả lời tải xong rồi thử lại.');
+        if (collected.length < expected) throw new Error('Chưa đọc đủ số câu của đề. Hãy chờ phiếu trả lời tải xong rồi thử lại.');
         examSnapshot = collected;
         return collected;
       } finally {
@@ -669,18 +694,20 @@
   // ============================================================
   function buildAIPrompt(questions) {
     for (const question of questions) {
-      if (!hasCompleteChoices(question)) throw new Error(`Câu ${question.number}: thiếu phương án, không thể tạo prompt chính xác.`);
+      if (!hasCompleteChoices(question)) throw new Error(question.readError || `Câu ${question.number}: thiếu phương án, không thể tạo prompt chính xác.`);
       for (const source of [question.math_content?.question || question.prompt, ...question.choices.map(c => c.math_content || c.text)]) {
         const result = math.canonicalize(source);
         if (result.status !== 'ok') throw new Error(`Câu ${question.number}: ${result.reason}. Không thể tạo prompt từ công thức chưa đọc được.`);
       }
     }
+    promptSnapshot = { id: Array.from(crypto.getRandomValues(new Uint8Array(16)), n => n.toString(16).padStart(2, '0')).join(''), signature: math.signature(questions), revision: examRevision, key: activeExamKey };
     const lines = [
       'Bạn là chuyên gia giải đề thi trắc nghiệm. Hãy giải chính xác 100% các câu hỏi dưới đây.',
       '',
       'QUY TẮC ĐỊNH DẠNG ĐÁP ÁN (BẮT BUỘC TUÂN THỦ):',
       '1. Trả về DUY NHẤT một mảng JSON nằm trong khối mã ```json ... ```.',
       '2. Không ghi bất kỳ lời giải thích, nhận xét hay văn bản nào bên ngoài khối JSON.',
+      `snapshot_id: ${promptSnapshot.id}. Chép trường "snapshot_id" này vào mỗi đáp án. Bắt buộc nếu chỉ trả chữ cái, khóa a/b/c/d hoặc câu không có ID.`,
       '3. Cấu trúc từng câu trong mảng JSON:',
       '   - Đối với Trắc nghiệm chọn 1 đáp án (MCQ):',
       '     {"cau": 1, "id": "123456", "loai": "MCQ", "dap_an": "A", "noi_dung_dap_an": "Nội dung phương án A"}',
@@ -1013,6 +1040,7 @@
       : [option, option.querySelector('.question-option-content'), option.querySelector('.question-option-label'), option.querySelector('input')];
 
     for (const target of [...new Set(targets.filter(Boolean))]) {
+      assertValidatedQuestion(currentQuestionNumber());
       target.click();
       if (await waitForCondition(registered, 900, 50)) return true;
     }
@@ -1020,6 +1048,7 @@
     // Một số mẫu MathPlay chỉ lắng nghe sự kiện input/change trên radio.
     const radio = option.querySelector('input[type="radio"]');
     if (radio) {
+      assertValidatedQuestion(currentQuestionNumber());
       radio.checked = true;
       radio.dispatchEvent(new Event('input', { bubbles: true }));
       radio.dispatchEvent(new Event('change', { bubbles: true }));
@@ -1291,8 +1320,7 @@
     // không được gán nhầm theo số thứ tự của lần làm khác.
     if (sourceId || promptKey) return null;
 
-    const qNum = Number(entry?.cau ?? entry?.q ?? entry?.number ?? entry?.questionNumber);
-    return index.byNumber.get(qNum) || null;
+    return null;
   }
 
   function contentMap(value) {
@@ -1433,7 +1461,7 @@
     return JSON.stringify(window.__ONLUYEN_DATABASE_EXPORT__ || [], null, 2);
   }
 
-  function parseAndLoadDatabase(inputJson, snapshot = false) {
+  function databaseItems(inputJson) {
     let items = [];
     if (typeof inputJson === 'string') {
       let cleaned = inputJson.trim();
@@ -1449,8 +1477,13 @@
     if (!Array.isArray(items)) {
       throw new Error('Định dạng JSON không hợp lệ. Cần mảng các object đáp án.');
     }
+    return items;
+  }
 
-    const questions = items.length ? getFullExamQuestions() : [];
+  function parseAndLoadDatabase(inputJson, snapshot = false, validatedQuestions = null) {
+    const items = databaseItems(inputJson);
+
+    const questions = items.length ? validatedQuestions || getFullExamQuestions() : [];
     const questionIndex = databaseQuestionIndex(questions);
     const prepared = items.map(entry => enrichDatabaseEntry(entry, questionForDatabaseEntry(entry, questionIndex), snapshot)).filter(Boolean);
     const seenIds = new Set();
@@ -1478,6 +1511,93 @@
     window.__ONLUYEN_DATABASE_EXPORT__.sort((a, b) => a.cau - b.cau);
     console.log(`💾 [OnluyenBot] Đã nạp ${window.__ONLUYEN_DATABASE_EXPORT__.length} đáp án chống xáo trộn vào Database.`);
     return window.__ONLUYEN_DATABASE_EXPORT__.length;
+  }
+
+  function matchFailure(report) {
+    const message = report.issues.map(issue => {
+      const source = issue.source?.length ? ` Nguồn: ${math.text({ version: 1, segments: issue.source }).slice(0, 240)}.` : '';
+      const diff = issue.diagnostic ? ` Khác với lựa chọn ${issue.diagnostic.choiceLabel || issue.label || '?'}: “${issue.diagnostic.leftText}” / “${issue.diagnostic.rightText}”.` : '';
+      return `${issue.number ? `Câu ${issue.number}${issue.label ? `, ý ${issue.label}` : ''}` : 'Đề'}${issue.id ? ` #${issue.id}` : ''}: ${issue.reason}${source}${diff}`;
+    }).join('\n');
+    return Object.assign(new Error(message || 'Kiểm tra đề thất bại.'), { report });
+  }
+
+  function assertValidatedQuestion(number) {
+    const expected = databaseValidation?.questions.find(q => q.number === number);
+    const current = extractStructuredTestQuestions().find(q => q.number === number);
+    if (expected && current) {
+      current.choices = current.choices.map(c => ({ ...c, idOption: c.idOption ?? expected.choices.find(e => e.label === c.label)?.idOption }));
+    }
+    if (!databaseValidation || databaseValidation.revision !== examRevision || databaseValidation.key !== activeExamKey
+        || !expected || !current || math.signature([expected]) !== math.signature([current])) {
+      databaseValidation = null;
+      const issue = { number, id: current?.sourceId || null, status: 'different', code: 'PAGE_CHANGED', reason: 'Nội dung/ID/lựa chọn đã thay đổi sau kiểm tra. Hãy kiểm tra lại toàn bộ đề.', source: [] };
+      lastMatchReport = math.matchReport({ ok: false, count: 0, issues: [issue] });
+      throw matchFailure(lastMatchReport);
+    }
+  }
+
+  async function validateDatabase(inputJson, commit = false) {
+    if (preflightRunning || window.__BOT_RUNNING__) throw new Error('Đang đọc đề hoặc chạy bot; hãy dừng trước khi kiểm tra lại.');
+    const items = databaseItems(inputJson);
+    if (!items.length && commit) {
+      parseAndLoadDatabase([]);
+      stagedDatabaseInput = null; databaseValidation = null; lastMatchReport = null;
+      persistExamDatabase();
+      return { ok: true, count: 0, answers: [], json: '[]' };
+    }
+    preflightRunning = true;
+    validationCancelled = false;
+    const revision = examRevision, key = activeExamKey;
+    try {
+      examSnapshot = null;
+      const questions = await getCompleteExamQuestions();
+      if (validationCancelled || revision !== examRevision || key !== examStorageKey()) throw new Error('Đã hủy kiểm tra hoặc chuyển bài; database trước đó được giữ nguyên.');
+      const activeSnapshot = promptSnapshot && promptSnapshot.revision === revision && promptSnapshot.key === key ? promptSnapshot : null;
+      const validation = math.validateExam(questions, items, { expectedTotal: expectedExamTotal(questions), snapshotId: activeSnapshot?.id, snapshotSignature: activeSnapshot?.signature });
+      lastMatchReport = math.matchReport(validation, { extensionVersion: chrome.runtime.getManifest?.().version || 'development' });
+      if (!validation.ok) throw matchFailure(lastMatchReport);
+      if (commit) {
+        const verified = validation.mappings.map(({ question, entry, choice, answer }) => {
+          entry = { ...entry, cau: question.number, ...(question.sourceId ? { id: question.sourceId } : {}),
+            noi_dung_cau_hoi: question.prompt, math_content: { ...entry.math_content, version: 1, question: question.math_content?.question || math.metadata(question.prompt) } };
+          if (question.answerType === 'TF') return { ...entry, dap_an: answer,
+            noi_dung_cac_y: Object.fromEntries(question.choices.map(c => [c.label, c.text])),
+            math_content: { ...entry.math_content, version: 1, statements: Object.fromEntries(question.choices.map(c => [c.label, c.math_content || math.metadata(c.text)])) } };
+          if (choice) return { ...entry, dap_an: choice.label, noi_dung_dap_an: choice.text,
+            ...(choice.idOption != null ? { id_dap_an: choice.idOption } : {}),
+            ...(choice.images?.length ? { anh_dap_an: choice.images.map(i => i.src) } : {}),
+            math_content: { ...entry.math_content, version: 1, answer: choice.math_content || math.metadata(choice.text) } };
+          return entry;
+        });
+        if (validationCancelled || revision !== examRevision || key !== examStorageKey()) throw new Error('Đã hủy kiểm tra hoặc chuyển bài.');
+        const previous = { data: new Map(window.__ONLUYEN_DATABASE__), ids: new Map(window.__ONLUYEN_DATABASE_BY_ID__), prompts: new Map(window.__ONLUYEN_DATABASE_BY_PROMPT__), exported: window.__ONLUYEN_DATABASE_EXPORT__, staged: stagedDatabaseInput, validation: databaseValidation, json: stagedDatabaseInput || databaseExportJson() };
+        parseAndLoadDatabase(verified, false, questions);
+        try {
+          await persistExamDatabase(key);
+          if (validationCancelled || revision !== examRevision || key !== examStorageKey()) throw new Error('Đã hủy kiểm tra hoặc chuyển bài trong khi lưu.');
+          stagedDatabaseInput = null;
+          databaseValidation = { revision, key, signature: math.signature(questions), questions };
+        } catch (error) {
+          if (revision === examRevision && key === activeExamKey) {
+            window.__ONLUYEN_DATABASE__ = previous.data;
+            window.__ONLUYEN_DATABASE_BY_ID__ = previous.ids;
+            window.__ONLUYEN_DATABASE_BY_PROMPT__ = previous.prompts;
+            window.__ONLUYEN_DATABASE_EXPORT__ = previous.exported;
+            stagedDatabaseInput = previous.staged; databaseValidation = previous.validation;
+          }
+          try { await persistExamDatabase(key, previous.json); } catch (_storageError) { /* Keep the previous in-memory state even if storage is unavailable. */ }
+          throw Object.assign(error, { code: validationCancelled ? 'CANCELLED' : 'STORAGE_ERROR' });
+        }
+      }
+      return { ok: true, count: validation.count, report: lastMatchReport, answers: window.__ONLUYEN_DATABASE_EXPORT__, json: databaseExportJson() };
+    } catch (error) {
+      if (!error.report && revision === examRevision && key === examStorageKey()) {
+        lastMatchReport = math.matchReport({ ok: false, count: 0, issues: [{ number: null, id: null, status: 'incomplete', code: error.code || (validationCancelled ? 'CANCELLED' : 'INCOMPLETE_EXAM'), reason: error.message, source: [] }] });
+        error.report = lastMatchReport;
+      }
+      throw error;
+    } finally { preflightRunning = false; }
   }
 
   // ============================================================
@@ -1699,7 +1819,7 @@
         if (expected === null || !radio) throw new Error(`Câu ${qNum}, ý ${key}: thiếu lựa chọn Đúng/Sai.`);
         used.add(candidates[0]); planned.push(radio);
       }
-      for (const radio of planned) if (!radio.checked) radio.click();
+      for (const radio of planned) if (!radio.checked) { assertValidatedQuestion(qNum); radio.click(); }
       return planned.length === rows.length;
 
     }
@@ -1709,10 +1829,11 @@
 
   async function runAutoBot() {
     const botRevision = examRevision;
-    if (window.__ONLUYEN_DATABASE__.size === 0) {
+    if (window.__ONLUYEN_DATABASE__.size === 0 && !stagedDatabaseInput) {
       throw new Error('Database đáp án đang trống. Vui lòng dùng "AI Tự Giải" hoặc nạp JSON đáp án trước.');
     }
 
+    if (botRevision !== examRevision) return;
     window.__BOT_RUNNING__ = true;
     const questions = getFullExamQuestions();
     const total = Math.max(questions.length, window.__ONLUYEN_DATABASE_EXPORT__.length);
@@ -1777,6 +1898,7 @@
         }
 
         const currentRoot = getCurrentQuestionRoot();
+        assertValidatedQuestion(i);
         const isShort = String(answerEntry.type || '').toUpperCase() === 'SHORT' || !!shortAnswerInput(currentRoot);
         const alreadyRecorded = typeof answerEntry.answer === 'string'
           && (isShort
@@ -1817,6 +1939,7 @@
         const answerButton = findAnswerButton();
         if (!answerButton) throw new Error(`Không còn tìm thấy nút "Trả lời" của câu ${i}.`);
         const identityBeforeSubmit = currentQuestionIdentity();
+        assertValidatedQuestion(i);
         answerButton.click();
         console.log(`✅ [OnluyenBot] Đã bấm Trả lời câu ${i}; đang chờ trang xác nhận...`);
 
@@ -1877,6 +2000,7 @@
   function stopAutoBot() {
     window.__BOT_RUNNING__ = false;
     collectionCancelled = true;
+    validationCancelled = true;
   }
 
   // ============================================================
@@ -1899,9 +2023,9 @@
         hasApiData,
         qCount,
         dbSize: window.__ONLUYEN_DATABASE_EXPORT__.length,
-        botRunning: window.__BOT_RUNNING__,
+        botRunning: window.__BOT_RUNNING__ || preflightRunning,
         examKey: activeExamKey,
-        databaseJson: databaseExportJson()
+        databaseJson: stagedDatabaseInput || databaseExportJson()
       });
       return false;
     }
@@ -1967,8 +2091,8 @@
           if (solveRevision !== examRevision || solveKey !== examStorageKey()) {
             throw new Error('Đã chuyển sang bài khác. Hãy giải lại đề hiện tại.');
           }
-          const count = parseAndLoadDatabase(aiResult.text, true);
-          persistExamDatabase();
+          const validated = await validateDatabase(aiResult.text, true);
+          const count = validated.count;
           const normalizedJson = databaseExportJson();
           sendResponse({
             ok: true,
@@ -1990,18 +2114,15 @@
 
     // 5. NẠP DATABASE THỦ CÔNG TỪ TEXTAREA
     if (message?.action === 'OL_LOAD_DATABASE') {
-      try {
-        const count = parseAndLoadDatabase(message.json, message.snapshot !== false);
-        persistExamDatabase();
-        sendResponse({
-          ok: true,
-          count,
-          answers: window.__ONLUYEN_DATABASE_EXPORT__,
-          json: databaseExportJson()
-        });
-      } catch (err) {
-        sendResponse({ ok: false, error: err.message });
-      }
+      validateDatabase(message.json, true).then(sendResponse).catch(err => sendResponse({ ok: false, error: err.message, report: err.report }));
+      return true;
+    }
+    if (message?.action === 'OL_VALIDATE_DATABASE') {
+      validateDatabase(message.json || stagedDatabaseInput || databaseExportJson()).then(sendResponse).catch(err => sendResponse({ ok: false, error: err.message, report: err.report }));
+      return true;
+    }
+    if (message?.action === 'OL_GET_MATCH_REPORT') {
+      sendResponse({ ok: !!lastMatchReport, report: lastMatchReport, error: lastMatchReport ? null : 'Chưa có báo cáo kiểm tra.' });
       return false;
     }
 
@@ -2012,13 +2133,16 @@
         return false;
       }
       const botRevision = examRevision;
-      runAutoBot().catch(err => {
-        if (botRevision === examRevision) {
-          chrome.runtime.sendMessage({ action: 'BOT_ERROR', error: err.message }).catch(() => {});
-        }
-      });
-      sendResponse({ ok: true });
-      return false;
+      const failed = err => {
+        if (botRevision === examRevision) chrome.runtime.sendMessage({ action: 'BOT_ERROR', error: err.message, report: err.report }).catch(() => {});
+      };
+      validateDatabase(stagedDatabaseInput || databaseExportJson(), true).then(result => {
+        if (!result.count) throw new Error('Database đáp án đang trống.');
+        if (botRevision !== examRevision) throw new Error('Đã chuyển bài trong khi kiểm tra.');
+        runAutoBot().catch(failed);
+        sendResponse({ ok: true, report: result.report });
+      }).catch(err => { failed(err); sendResponse({ ok: false, error: err.message, report: err.report }); });
+      return true;
     }
 
     // 7. DỪNG BOT

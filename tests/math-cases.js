@@ -38,6 +38,11 @@ module.exports = {
   splitNumberedQuestion,
   logicNumberedQuestion: require('node:fs').readFileSync(require('node:path').join(__dirname, 'fixtures/logic-numbered-mathml-question.html'), 'utf8'),
   equal: [
+    ['Nếu một số nguyên chia hết cho 6 thì nó chia hết cho 2 và 3.', `<p>Nếu một số nguyên chia hết cho ${m('<mn>6</mn>')} thì nó chia hết cho ${m('<mn>2</mn>')} và ${m('<mn>3</mn>')}.</p>`],
+    ['Nếu hai số x, y thỏa mãn x+y>0.', `<p>Nếu hai số ${m('<mi>x</mi><mo>,</mo><mi>y</mi>')} thỏa mãn ${m('<mi>x</mi><mo>+</mo><mi>y</mi><mo>&gt;</mo><mn>0</mn>')}.</p>`],
+    ['Nếu hai số a, b cùng chia hết cho c.', `<p>Nếu hai số ${m('<mi>a</mi><mo>,</mo><mi>b</mi>')} cùng chia hết cho ${m('<mi>c</mi>')}.</p>`],
+    ['Cho góc α và Δ.', `<p>Cho góc ${m('<mi>α</mi>')} và ${m('<mi>Δ</mi>')}.</p>`],
+    ['Cho 0.5 là giá trị.', `<p>Cho ${m('<mn>0.5</mn>')} là giá trị.</p>`],
     [triangleAnswer, triangleChoices[1]],
     [triangleAnswer, 'Nếu tam giác $ABC$ là tam giác cân thì tam giác $ABC$ là tam giác đều.'],
     [{ version: 1, segments: [{ format: 'text', raw: triangleAnswer }] }, triangleChoices[1]],
@@ -98,6 +103,12 @@ module.exports = {
     ['$x^{12}$', '<m:math xmlns:m="http://www.w3.org/1998/Math/MathML"><m:msup><m:mi>x</m:mi><m:mn>12</m:mn></m:msup></m:math>']
   ],
   different: [
+    ['Số 12 là kết quả.', `<p>Số ${m('<mn>1</mn><mn>2</mn>')} là kết quả.</p>`],
+    ['Cho số 2,3.', `<p>Cho số ${m('<mn>2,3</mn>')}.</p>`],
+    ['Cho 6, 2 và 3.', 'Cho 6; 2 và 3.'],
+    ['Cho α.', 'Cho Α.'],
+    ['Cho x.', 'Cho X.'],
+    ['Điểm. A đúng.', 'Điểm A đúng.'],
     [triangleAnswer, triangleChoices[0]],
     [triangleAnswer, triangleChoices[2]],
     [triangleAnswer, triangleChoices[3]],

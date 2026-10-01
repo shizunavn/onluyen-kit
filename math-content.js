@@ -375,12 +375,13 @@
     // A set-builder expression has explicit outer structure even when its
     // predicate includes prose (e.g. x chia hết cho 3).
     if (/^(?:\(\d+\)\s*)?[A-Za-z]\s*=\s*\{[\s\S]*\}$/.test(s)) return true;
+    if (/\s/.test(s) && Array.from(s.matchAll(/[A-Za-z]{2,}/g)).some(m => !/^[A-Z]{1,3}$/.test(m[0]) && !functions.has(m[0]) && !s.includes(`\\${m[0]}`))) return false;
     if (/[\p{L}]/u.test(s.replace(/[A-Za-zα-ωΑ-Ωℕℤℚℝℂⁿ]/gu, ''))) return false;
     if (/\\[A-Za-z]+|[≤≥⩽⩾⇒⇔→←∪∩∈∉⊂⊆⊃⊇∞ℕℤℚℝℂ√½⅓⅔¼¾⅕⅖⅗⅘⅙⅚⅛⅜⅝⅞²³⁰¹⁴⁵⁶⁷⁸⁹₀-₉′″‴\u20d7\u0304\u0302\u0307\u0308\u0332]/u.test(s)) return true;
     if (!/[\p{L}\p{N}]/u.test(s)) return false;
     return /^[\dA-Za-zα-ωΑ-Ω\s+\-−–=<>^_()[\]{},;.:|/×·]+$/u.test(s) && !/[A-Za-z]{4,}/.test(s);
   }
-  function splitPlain(value, segments) {
+  function splitPlain(value, segments, prose = false) {
     let s = decode(value).trim();
     if (!s) return;
     const pattern = /\$\$([\s\S]*?)\$\$|\$([^$]*?)\$|\\\(([\s\S]*?)\\\)|\\\[([\s\S]*?)\\\]/g;
@@ -391,21 +392,21 @@
       const raw = m[1] ?? m[2] ?? m[3] ?? m[4];
       if (/\r?\n/.test(prefix)) lineHasMath = false;
       if (!lineHasMath && /(?:^|\n)\s*\d+\s*$/.test(prefix) && raw.trim() === ')') {
-        splitPlain(prefix + ')', segments);
+        splitPlain(prefix + ')', segments, prose);
       } else if (!lineHasMath && /(?:^|\n)\s*$/.test(prefix) && /^\s*\d+\s*\)\s*$/.test(raw) && s.slice(m.index + m[0].length).trim()) {
-        splitPlain(prefix + raw.trim(), segments);
+        splitPlain(prefix + raw.trim(), segments, prose);
       } else {
-        splitPlain(prefix, segments);
+        splitPlain(prefix, segments, true);
         segments.push({ format: 'latex', raw });
         lineHasMath = true;
       }
       end = m.index + m[0].length;
     }
-    if (found) { splitPlain(s.slice(end), segments); return; }
+    if (found) { splitPlain(s.slice(end), segments, true); return; }
     if (/\$|\\[()[\]]/.test(s)) incomplete('Delimiter công thức chưa đóng');
     const lines = s.split(/\r?\n/);
     if (lines.length > 1 && lines.slice(1).some(line => /^\s*(\d+|[A-Za-z])\s*\)(?=\s|$)/.test(line))) {
-      lines.forEach(line => splitPlain(line, segments));
+      lines.forEach(line => splitPlain(line, segments, prose));
       return;
     }
     // Number/letter list markers belong to surrounding prose. A fragment like
@@ -415,11 +416,11 @@
     const marker = s.match(/^(\d+|[A-Za-z])\s*\)(?=\s|$)/);
     if (marker) {
       segments.push({ format: 'text', raw: `${marker[1]})` });
-      splitPlain(s.slice(marker[0].length), segments);
+      splitPlain(s.slice(marker[0].length), segments, prose);
       return;
     }
     const bare = s.replace(/[.]$/, '');
-    if (bare && looksMath(bare)) {
+    if (bare && looksMath(bare) && !(prose && /^[A-Za-z]{2,}$/.test(bare) && !/^[A-Z]{1,3}$/.test(bare))) {
       segments.push({ format: 'plain', raw: bare });
       if (s.endsWith('.')) segments.push({ format: 'text', raw: '.' });
     } else {
@@ -459,7 +460,7 @@
           pending += value;
           if (/\r?\n/.test(value)) lineHasMath = false;
         };
-        const flush = () => { splitPlain(pending, segments); pending = ''; };
+        const flush = () => { splitPlain(pending, segments, proseDocument); pending = ''; };
         const emitMath = (format, raw, node) => {
           // Onluyen can render just the list delimiter as its own MathML node:
           // text "1 " + <math><mo>)</mo></math>. Recognize it only after a
@@ -497,7 +498,7 @@
             const math = findMath(node);
             if (math) emitMath('mathml', xmlSource(math), math);
             else if (node.attrs['data-latex']) emitMath('latex', node.attrs['data-latex']);
-            else incomplete('MathJax chưa có MathML/LaTeX gốc');
+            else incomplete('MathJax chưa render: chưa có MathML/LaTeX gốc');
             return;
           }
           if (['p', 'div', 'br', 'li'].includes(node.name)) append('\n');
@@ -517,10 +518,10 @@
       const mapped = content.segments.flatMap(segment => {
         if (segment.format === 'text') {
           const value = decode(segment.raw).normalize('NFC').replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/\p{L}+/gu, word => {
-            if (/^[A-Z]{1,3}$/.test(word)) return word;
+            if (/^[A-Z]{1,3}$/.test(word) || /^[α-ωΑ-Ω]$/.test(word)) return word;
             const lower = word.toLocaleLowerCase('vi');
             return lower === 'toạ' ? 'tọa' : lower;
-          }).replace(/\s+/g, ' ').trim().replace(/\.$/, '');
+          }).replace(/\s+/g, ' ').trim();
           // Short capital names in prose (triangle ABC, points A/B, P/Q)
           // have the same letters whether rendered as text or math. Preserve
           // case and order; never flatten scripts, accents or other math nodes.
@@ -552,8 +553,28 @@
         else parts.push(part);
       }
       for (const part of parts) if (part.t === 'math') validateFences(part.body);
-      return { kind: 'canonical-math-content', status: 'ok', key: parts.length ? JSON.stringify(parts) : '', parts, content };
+      const tokens = parts.flatMap(part => part.t === 'text' ? proseTokens(part.v) : mathTokens(part.body));
+      // Sentence punctuation belongs to the full content, not each renderer
+      // fragment. Removing it from each text segment loses interior periods.
+      if (tokens.at(-1)?.t === 'symbol' && tokens.at(-1).v === '.') tokens.pop();
+      return { kind: 'canonical-math-content', canonicalVersion: 2, status: 'ok', key: tokens.length ? JSON.stringify(tokens) : '', tokens, parts, content };
     } catch (e) { return { status: e.status || 'unsupported', reason: e.message, content }; }
+  }
+  function proseTokens(value) {
+    return Array.from(value.matchAll(/[\p{L}\p{M}]+|\d+(?:\.\d+)?|[^\s]/gu), match => {
+      const atom = match[0];
+      if (/^\d+(?:\.\d+)?$/.test(atom)) return [{ t: 'number', v: atom }];
+      if (/^[A-Za-zα-ωΑ-Ω]$/.test(atom) || /^[A-Z]{1,3}$/.test(atom)) return Array.from(atom, c => mathTokens(symbol(c))).flat();
+      if (/^[\p{L}\p{M}]+$/u.test(atom)) return [{ t: 'word', v: atom }];
+      return [symbol(atom)];
+    }).flat();
+  }
+  function mathTokens(node) {
+    if (node.t === 'row') return node.items.flatMap(mathTokens);
+    if (node.t === 'number' || node.t === 'symbol') return [node];
+    // Fractions, scripts, roots, styles, text inside formulas and tables remain
+    // opaque structural atoms. They must never match their flattened spelling.
+    return [{ t: 'structure', body: node }];
   }
   function validateFences(node) {
     if (!node) return;
@@ -581,9 +602,13 @@
     const a = canonicalize(left), b = canonicalize(right);
     if (a.status !== 'ok' || b.status !== 'ok') {
       const bad = a.status !== 'ok' ? a : b;
-      return { status: bad.status, reason: bad.reason };
+      return { status: bad.status, code: bad.status === 'incomplete' ? 'INCOMPLETE_SOURCE' : 'UNSUPPORTED_SYNTAX', reason: bad.reason };
     }
-    return { status: a.key === b.key ? 'equal' : 'different', reason: a.key === b.key ? '' : 'Nội dung/cấu trúc công thức khác nhau' };
+    if (a.key === b.key) return { status: 'equal', code: 'MATCH', reason: '' };
+    let differenceIndex = 0;
+    while (JSON.stringify(a.tokens[differenceIndex]) === JSON.stringify(b.tokens[differenceIndex])) differenceIndex++;
+    const describe = token => token ? token.v ?? render(token.body) : '(hết nội dung)';
+    return { status: 'different', code: 'CONTENT_DIFFERENT', reason: 'Nội dung/cấu trúc công thức khác nhau', diagnostic: { index: differenceIndex, left: a.tokens[differenceIndex] ?? null, right: b.tokens[differenceIndex] ?? null, leftText: describe(a.tokens[differenceIndex]), rightText: describe(b.tokens[differenceIndex]) } };
   }
   function text(input) {
     const c = canonicalize(input);
@@ -666,9 +691,134 @@
     const bad = comparisons.find(c => c.status === 'unsupported' || c.status === 'incomplete');
     if (bad) return { ...bad, choice: null };
     if (matches.length > 1 || ids.length > 1) return { status: 'different', reason: 'Khớp nhiều lựa chọn', choice: null };
+    if (optionId != null && choices.some(c => c.idOption != null) && ids.length !== 1) return { status: 'different', code: 'ID_CONFLICT', reason: 'ID đáp án không tồn tại trong các lựa chọn hiện tại', choice: null };
     if (ids.length && hasSaved && matches[0] !== ids[0]) return { status: 'different', reason: 'ID đáp án và nội dung mâu thuẫn', choice: null };
     const choice = matches[0] || (!hasSaved && ids[0]);
     return choice ? { status: 'equal', reason: '', choice } : { status: 'different', reason: 'Không có lựa chọn khớp duy nhất', choice: null };
   }
-  return { readContent, canonicalize, compare, text, metadata, combine, resolveChoice };
+  function signature(questions) {
+    return JSON.stringify(questions.map(q => ({
+      number: q.number, id: q.sourceId || null, type: q.answerType,
+      prompt: canonicalize(q.math_content?.question || q.prompt).key || null,
+      choices: (q.choices || []).map(c => ({ label: c.label, id: c.idOption ?? null,
+        key: canonicalize(c.math_content || c.text).key || null,
+        images: (c.images || []).map(i => typeof i === 'string' ? i : i.src) }))
+    })));
+  }
+  function errorCode(reason, status = 'different') {
+    if (/MathJax|render/.test(reason || '')) return 'NOT_RENDERED';
+    if (/mất cấu trúc/.test(reason || '')) return 'LOSSY_DATABASE';
+    if (/nhiều|trùng/.test(reason || '')) return 'MULTIPLE_MATCHES';
+    if (/mâu thuẫn/.test(reason || '')) return 'ID_CONFLICT';
+    return status === 'unsupported' ? 'UNSUPPORTED_SYNTAX' : status === 'incomplete' ? 'INCOMPLETE_SOURCE' : 'CONTENT_DIFFERENT';
+  }
+  function validateExam(questions, entries, options = {}) {
+    const issues = [], mappings = [], used = new Set();
+    const snapshotValid = !!options.snapshotId && options.snapshotSignature === signature(questions);
+    const add = (q, result, source, label) => {
+      const value = readContent(source || '');
+      issues.push({ number: q?.number ?? null, id: q?.sourceId || null, label: label ?? null,
+        status: result.status || 'different', code: result.code || errorCode(result.reason, result.status),
+        reason: result.reason, ...(result.diagnostic ? { diagnostic: result.diagnostic } : {}),
+        source: value.segments.map(s => ({ format: s.format, raw: String(s.raw).slice(0, 8192) })) });
+    };
+    entries = entries.filter(entry => {
+      if (entry && typeof entry === 'object' && !Array.isArray(entry)) return true;
+      add(null, { status: 'unsupported', code: 'INVALID_DATABASE_ENTRY', reason: 'Mỗi đáp án phải là một object JSON.' });
+      return false;
+    });
+    if (!questions.length || (options.expectedTotal && questions.length !== options.expectedTotal)) {
+      add(null, { status: 'incomplete', code: 'INCOMPLETE_EXAM', reason: 'Chưa đọc đủ toàn bộ đề.' });
+    }
+    const ids = new Set(), numbers = new Set();
+    for (const q of questions) {
+      const start = issues.length;
+      if (numbers.has(q.number) || (q.sourceId && ids.has(String(q.sourceId)))) {
+        add(q, { code: 'DUPLICATE_QUESTION', reason: 'ID hoặc số câu bị trùng trong đề.' });
+      }
+      numbers.add(q.number); if (q.sourceId) ids.add(String(q.sourceId));
+      const choices = q.choices || [];
+      if (q.answerType !== 'SHORT' && choices.length < Math.max(2, q.expectedChoiceCount || 0)) {
+        add(q, { status: 'incomplete', code: 'NOT_RENDERED', reason: 'Chưa đọc đủ lựa chọn.' });
+      }
+      for (const [source, label] of [[q.math_content?.question || q.prompt, null], ...choices.map(c => [c.math_content || c.text, c.label])]) {
+        const c = canonicalize(source);
+        if (c.status !== 'ok') add(q, c, source, label);
+      }
+      const candidates = entries.filter(e => {
+        const id = e.id ?? e.question_id ?? e.sourceId;
+        if (id != null && String(id).trim()) return String(id) === String(q.sourceId);
+        const prompt = e.math_content?.question || e.noi_dung_cau_hoi || e.question_text || e.q_content;
+        if (prompt) return compare(prompt, q.math_content?.question || q.prompt).status === 'equal';
+        return snapshotValid && e.snapshot_id === options.snapshotId && Number(e.cau ?? e.q ?? e.number) === q.number;
+      });
+      if (candidates.length !== 1) {
+        add(q, { code: candidates.length ? 'MULTIPLE_MATCHES' : 'MISSING_ANSWER', reason: candidates.length ? 'Nhiều đáp án khớp cùng câu.' : 'Thiếu đáp án khớp ID/nội dung câu; dữ liệu chỉ có số thứ tự cần snapshot_id hợp lệ.' });
+        continue;
+      }
+      const entry = candidates[0]; used.add(entry);
+      const declared = String(entry.loai ?? entry.type ?? q.answerType).toUpperCase();
+      const types = { MCQ: 'MCQ', SINGLE: 'MCQ', SINGLE_CHOICE: 'MCQ', 0: 'MCQ', TF: 'TF', TRUE_FALSE: 'TF', 1: 'TF', SHORT: 'SHORT', SA: 'SHORT', SHORT_ANSWER: 'SHORT', FILL_IN: 'SHORT', 2: 'SHORT' };
+      if (types[declared] !== q.answerType) add(q, { code: 'ANSWER_TYPE_CONFLICT', reason: 'Loại đáp án không khớp loại câu hỏi hiện tại.' });
+      const positional = snapshotValid && entry.snapshot_id === options.snapshotId;
+      const savedPrompt = entry.math_content?.question || entry.noi_dung_cau_hoi || entry.question_text;
+      if (savedPrompt) {
+        const result = compare(savedPrompt, q.math_content?.question || q.prompt);
+        if (result.status !== 'equal') add(q, { ...result, code: 'QUESTION_ID_CONFLICT', reason: 'ID câu và nội dung đề mâu thuẫn.' }, savedPrompt);
+      }
+      const answer = entry.dap_an ?? entry.answer ?? entry.a;
+      if (q.answerType === 'SHORT') {
+        if (answer == null || String(answer).trim() === '') add(q, { code: 'MISSING_ANSWER', reason: 'Thiếu đáp án trả lời ngắn.' });
+        if (issues.length === start) mappings.push({ question: q, entry, answer: String(answer).trim() });
+        continue;
+      }
+      if (q.answerType === 'TF') {
+        const texts = entry.noi_dung_cac_y || entry.statement_texts || entry.choiceTexts || {};
+        const sources = entry.math_content?.statements || {};
+        const choiceIds = entry.id_cac_y || {};
+        const keys = [...new Set([...Object.keys(texts), ...Object.keys(sources), ...Object.keys(choiceIds)])];
+        const mapped = {}, mappedKeys = new Set();
+        for (const choice of choices) {
+          const identified = keys.filter(k => choiceIds[k] != null && String(choiceIds[k]) === String(choice.idOption));
+          if (identified.some(k => (sources[k] || texts[k]) && compare(sources[k] || texts[k], choice.math_content || choice.text).status !== 'equal')) {
+            add(q, { code: 'ID_CONFLICT', reason: 'ID và nội dung ý Đúng/Sai mâu thuẫn.' }, '', choice.label);
+          }
+          let matches = keys.filter(k => {
+            const source = sources[k] || texts[k];
+            const id = choiceIds[k];
+            if (id != null && String(id) !== String(choice.idOption)) return false;
+            return source ? compare(source, choice.math_content || choice.text).status === 'equal' : id != null;
+          });
+          if (!keys.length && positional) matches = [choice.label];
+          const key = matches.length === 1 ? matches[0] : null;
+          const value = key != null ? answer?.[key] : null;
+          if (key == null || mappedKeys.has(key)) add(q, { code: 'MULTIPLE_MATCHES', reason: 'Không khớp duy nhất nội dung/ID ý Đúng/Sai.' }, sources[key] || texts[key], choice.label);
+          else if (!/^(?:đúng|dung|sai|true|false|1|0)$/i.test(String(value))) add(q, { code: 'MISSING_ANSWER', reason: 'Thiếu giá trị Đúng/Sai hợp lệ.' }, '', choice.label);
+          else { mappedKeys.add(key); mapped[choice.label] = /^(?:đúng|dung|true|1)$/i.test(String(value)) ? 'Đúng' : 'Sai'; }
+        }
+        if (!keys.length && !positional) add(q, { code: 'SNAPSHOT_EXPIRED', reason: 'Đáp án Đúng/Sai theo vị trí cần snapshot_id của đề hiện tại.' });
+        if (issues.length === start) mappings.push({ question: q, entry, answer: mapped });
+        continue;
+      }
+      const source = entry.math_content?.answer || entry.noi_dung_dap_an_goc || entry.noi_dung_dap_an || entry.answer_text || entry.a_content;
+      const imageRefs = entry.anh_dap_an ?? entry.answer_images;
+      const optionId = entry.id_dap_an ?? entry.answer_id ?? entry.answerId;
+      let resolution;
+      if (!source && imageRefs == null && optionId == null) {
+        const choice = positional ? choices.find(c => String(c.label).toUpperCase() === String(answer).toUpperCase()) : null;
+        resolution = choice ? { status: 'equal', choice } : { code: 'SNAPSHOT_EXPIRED', reason: 'Đáp án chỉ có chữ cái cần snapshot_id của đề hiện tại.' };
+      } else resolution = resolveChoice(choices, source, optionId, imageRefs);
+      if (resolution.status !== 'equal') {
+        const comparisons = source ? choices.map(c => ({ ...compare(source, c.math_content || c.text), label: c.label })) : [];
+        const difference = comparisons.find(c => c.diagnostic);
+        add(q, { ...resolution, ...(difference ? { diagnostic: { ...difference.diagnostic, choiceLabel: difference.label } } : {}) }, source);
+      } else if (issues.length === start) mappings.push({ question: q, entry, choice: resolution.choice, answer: resolution.choice.label });
+    }
+    for (const entry of entries) if (!used.has(entry)) add(null, { code: 'QUESTION_NOT_FOUND', reason: `Không tìm thấy câu của đáp án ID ${entry.id ?? entry.sourceId ?? 'không có'}, số ${entry.cau ?? entry.q ?? '?'}.` }, entry.math_content?.question || entry.noi_dung_cau_hoi);
+    return { version: 1, ok: !issues.length, count: questions.length, issues, mappings };
+  }
+  function matchReport(validation, versions = {}) {
+    return { version: 1, canonicalVersion: 2, ...versions, ok: validation.ok, count: validation.count, issues: validation.issues };
+  }
+  return { readContent, canonicalize, compare, text, metadata, combine, resolveChoice, signature, validateExam, matchReport, errorCode };
 });

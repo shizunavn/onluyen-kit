@@ -1,10 +1,10 @@
 {
   "name": "onluyen-kit",
-  "version": "1.6.19",
+  "version": "1.6.20",
   "private": true,
   "description": "Onluyen browser extension and local bulk runner",
   "scripts": {
-    "test": "node tests/smoke.test.js && node tests/math-content.test.js && node tests/question-dom.test.js && node tests/cli.test.js",
+    "test": "node tests/smoke.test.js && node tests/math-content.test.js && node tests/question-dom.test.js && node tests/cli.test.js && node tests/preflight.test.js",
     "bulk": "node cli/bulk-runner.js --links bulk-tests.txt --submit",
     "bulk:dry": "node cli/bulk-runner.js --links bulk-tests.txt --dry-run"
   },

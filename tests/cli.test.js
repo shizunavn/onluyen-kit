@@ -129,7 +129,7 @@ const imageQuestions = parseApiQuestions([{ dataStandard: {
 assert.equal(imageQuestions[0].choices.length, 2);
 assert.match(buildPrompt(imageQuestions), /phương án B/);
 assert.match(buildPrompt(imageQuestions), /anh_dap_an/);
-const imageAnswer = validateAndEnrichAnswers([{ cau: 1, loai: 'MCQ', dap_an: 'A', anh_dap_an: ['data:image/png;base64,iVBORw0KGgo='] }], imageQuestions)[0];
+const imageAnswer = validateAndEnrichAnswers([{ cau: 1, id: imageQuestions[0].sourceId, loai: 'MCQ', dap_an: 'A', anh_dap_an: ['data:image/png;base64,iVBORw0KGgo='] }], imageQuestions)[0];
 assert.equal(imageAnswer.dap_an, 'B');
 assert.equal(imageAnswer.id_dap_an, 'image-b');
 assert.deepEqual(imageAnswer.anh_dap_an, ['data:image/png;base64,iVBORw0KGgo=']);
@@ -137,7 +137,7 @@ const reorderedImages = [{ ...imageQuestions[0], choices: imageQuestions[0].choi
 const matchedImageAnswer = matchBankAnswers(reorderedImages, [imageAnswer]);
 assert.equal(matchedImageAnswer.missing.length, 0);
 assert.equal(matchedImageAnswer.matched[0].dap_an, 'A');
-assert.throws(() => validateAndEnrichAnswers([{ cau: 1, dap_an: 'B', id_dap_an: 'image-a', anh_dap_an: imageAnswer.anh_dap_an }], imageQuestions), /mâu thuẫn/);
+assert.throws(() => validateAndEnrichAnswers([{ cau: 1, id: imageQuestions[0].sourceId, dap_an: 'B', id_dap_an: 'image-a', anh_dap_an: imageAnswer.anh_dap_an }], imageQuestions), /mâu thuẫn/);
 
 const { triangleAnswer, triangleChoices } = require('./math-cases');
 const triangleQuestions = parseApiQuestions([{ dataStandard: {
@@ -165,7 +165,8 @@ assert.equal(bankMatch.missing.length, 0);
 assert.equal(bankMatch.matched[0].dap_an, 'A');
 assert.equal(bankMatch.matched[0].noi_dung_dap_an, 'trao đổi.');
 
-const enriched = validateAndEnrichAnswers([{ cau: 1, loai: 'MCQ', dap_an: 'B' }], questions);
+const freshToken = buildPrompt(questions).match(/snapshot_id: ([a-f0-9-]+)/)[1];
+const enriched = validateAndEnrichAnswers([{ cau: 1, id: questions[0].sourceId, snapshot_id: freshToken, loai: 'MCQ', dap_an: 'B' }], questions);
 assert.deepEqual(enriched[0], {
   cau: 1,
   id: '12475737',
@@ -186,7 +187,7 @@ const shortQuestions = parseApiQuestions([{
 }]);
 assert.equal(shortQuestions[0].answerType, 'SHORT');
 assert.deepEqual(validateAndEnrichAnswers(
-  [{ cau: 1, loai: 'SHORT', dap_an: '-2,5' }],
+  [{ cau: 1, id: shortQuestions[0].sourceId, loai: 'SHORT', dap_an: '-2,5' }],
   shortQuestions
 ), [{
   cau: 1,

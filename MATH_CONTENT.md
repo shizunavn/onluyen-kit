@@ -11,6 +11,9 @@
 - `text(input)` provides a readable representation. Structural MathML is rendered with explicit LaTeX grouping instead of flattened text.
 - `resolveChoice(choices, savedSource, optionId)` requires a unique match, rejects ambiguous/unsupported candidates and checks option-ID conflicts.
 - `combine(...sources)` combines source segments without flattening formulas.
+- `signature(questions)` fingerprints the ordered question identities and contents. It is transient and must be recalculated from source.
+- `validateExam(questions, entries, options)` checks every question and answer without selecting or saving anything. It returns `ok`, all `issues`, and internal verified `mappings`. Options accept `expectedTotal`, `snapshotId` and the original `snapshotSignature` for positional replies.
+- `matchReport(validation, versions)` exports only the diagnostic allowlist, not answer-entry objects, browser state or credentials.
 
 ## Saved data
 
@@ -31,6 +34,10 @@ Existing Vietnamese fields remain supported. Optional `math_content` on a databa
 
 The reader supports common operators, relations, fractions, roots, scripts, sets, intervals, functions, accents/vectors, sums/integrals, matrices and systems. Unsupported commands/elements remain diagnosable; missing MathJax source is incomplete. It is deliberately conservative about flattened legacy data, malformed syntax and ambiguous positional caches. Layout and rendering differences can normalize; case, operators, order, grouping and numeric structure remain significant.
 
-Standalone capital names of one to three letters in prose (such as `A`, `P`, or triangle `ABC`) compare as the same sequence of letters when rendered in LaTeX or MathML. This also applies when reading older text metadata. Letter case and order still matter; scripts and accents are retained as separate structure.
+Canonical version 2 uses a token stream independent of text/math renderer boundaries. Standalone integers, single-letter variables and capital names of one to three letters (such as triangle `ABC`) compare across prose, LaTeX and MathML. Word whitespace and terminal sentence periods normalize; internal punctuation stays significant. Separate numeric atoms never concatenate. Commas in ambiguous prose are not guessed to be decimal points. Fractions, scripts, accents, roots and tables stay structural atoms; source metadata remains version 1.
+
+`compare` adds optional `code` and `diagnostic` fields with the first differing token. Whole-exam reports distinguish missing answers, incomplete exams, unavailable rendering, unsupported syntax, multiple matches, conflicting IDs, expired snapshots and changed page content. Source segments in a report are restricted to the relevant question/answer and capped at 8192 characters each.
+
+Positional MCQ/TF answers need the `snapshot_id` emitted by the current prompt and an unchanged original signature. Answer contents and valid IDs still match without that token. Validation is atomic: incomplete or failed imports do not replace the current database, and auto-fill rechecks the live question before each selection and answer button.
 
 Short-answer input behavior is unchanged. CLI test-cache schema is now 3, with old caches still readable. Source metadata is versioned independently at 1. Run `npm test` for the shared Node/browser corpus and integration checks.

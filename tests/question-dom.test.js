@@ -67,6 +67,17 @@ async function mount(browser, body, url) {
 }
 
 async function send(page, message) {
+  // Successful legacy fixtures represent fresh AI replies. Bind positional
+  // replies to a prompt the same way a user now does; rejection tests opt out.
+  if (message.action === 'OL_LOAD_DATABASE' && Array.isArray(message.json) && message.freshSnapshot !== false
+      && message.json.some(e => !e.math_content?.answer && !e.noi_dung_dap_an && !e.id_dap_an && !e.anh_dap_an && e.loai !== 'SHORT'
+        || !(e.id ?? e.sourceId) && !e.noi_dung_cau_hoi)) {
+    const prompt = await send(page, { action: 'OL_GET_AI_PROMPT' });
+    if (prompt.ok) {
+      const token = prompt.prompt.match(/snapshot_id: ([a-f0-9]+)/)?.[1];
+      message = { ...message, json: message.json.map(e => ({ ...e, snapshot_id: token })) };
+    }
+  }
   return page.evaluate(payload => new Promise(resolve => {
     window.__onluyenListener(payload, {}, resolve);
   }), message);
@@ -156,6 +167,8 @@ function trueFalseRow(key, text, token) {
       <div id="test-step-question"><div class="question-container">
         <div class="question-info"><div class="num">Câu: 1 <span>#12460413</span></div></div>
         <div class="question-name">Một vật được coi là chất điểm khi</div>
+        <div class="question-option"><span class="question-option-label">A</span><div class="question-option-content">Lựa chọn A.</div><input type="checkbox"></div>
+        <div class="question-option"><span class="question-option-label">B</span><div class="question-option-content">Lựa chọn B.</div><input type="checkbox"></div>
       </div></div>`, 'https://app.onluyen.vn/school/test/step/exam-a');
     const examA = [{ cau: 1, id: '12460413', loai: 'MCQ', dap_an: 'A' }];
     await send(routePage, { action: 'OL_LOAD_DATABASE', json: examA });
@@ -171,7 +184,7 @@ function trueFalseRow(key, text, token) {
       document.querySelector('.question-info .num').innerHTML = 'Câu: 1 <span>#12475660</span>';
       document.querySelector('.question-name').textContent = 'Câu hỏi kinh tế';
     });
-    await routePage.waitForFunction(() => window.__ONLUYEN_DATABASE_BY_ID__.has('12475660'));
+    await routePage.waitForFunction(() => window.__ONLUYEN_DATABASE_BY_ID__.size === 0);
     const examBStatus = await send(routePage, { action: 'OL_PING' });
     assert.equal(examBStatus.examKey, 'onluyen_saved_db:exam-b');
     assert.equal(examBStatus.botRunning, false);
@@ -190,7 +203,7 @@ function trueFalseRow(key, text, token) {
     });
     const restoredStatus = await send(routePage, { action: 'OL_PING' });
     assert.equal(JSON.parse(restoredStatus.databaseJson)[0].id, '12460413');
-    assert.equal(restoredStatus.dbSize, 1);
+    assert.equal(restoredStatus.dbSize, 0, 'Restored cache remains staged until full validation');
     await routePage.evaluate(() => history.pushState({}, '', '/school/test/step/exam-c'));
     const staleLoad = await send(routePage, {
       action: 'OL_LOAD_DATABASE', json: examA, examKey: 'onluyen_saved_db:exam-a'
@@ -503,18 +516,15 @@ function trueFalseRow(key, text, token) {
       { cau: 1, loai: 'MCQ', dap_an: 'B', noi_dung_cau_hoi: 'Câu hỏi thuộc bài khác', noi_dung_dap_an: 'phân phối.' }
     ]) {
       const loaded = await send(mcqPage, { action: 'OL_LOAD_DATABASE', json: [foreignEntry] });
-      assert.equal(loaded.ok, true);
-      assert.equal(loaded.count, 1, 'Keep entries for questions that may render later');
-      await send(mcqPage, { action: 'OL_START_BOT' });
-      await mcqPage.waitForFunction(() => window.__BOT_RUNNING__ === false);
+      assert.equal(loaded.ok, false, 'Reject foreign entries before replacing the database');
       const rejected = await mcqPage.evaluate(() => ({
         clicks: window.__optionClicks,
         submits: window.__submitClicks,
-        error: window.__runtimeMessages.filter(message => message.action === 'BOT_ERROR').at(-1)?.error
+        error: (window.__runtimeMessages || []).filter(message => message.action === 'BOT_ERROR').at(-1)?.error
       }));
       assert.equal(rejected.clicks, 0);
       assert.equal(rejected.submits, 0);
-      assert.match(rejected.error, /Thiếu đáp án khớp câu 1.*12475737.*Database có thể thuộc bài khác/);
+      assert.ok(loaded.report.issues.some(issue => issue.code === 'MISSING_ANSWER'));
     }
     await send(mcqPage, {
       action: 'OL_LOAD_DATABASE',
@@ -622,6 +632,7 @@ function trueFalseRow(key, text, token) {
         </div>
       </div>`);
     await resumeMathPage.evaluate(() => {
+      const savedQuestionHtml = document.querySelector('#test-step-question').innerHTML;
       window.__mathSelected = null;
       window.__renderMathQuestion = () => {
         document.querySelector('#test-step-question').innerHTML = `
@@ -644,6 +655,7 @@ function trueFalseRow(key, text, token) {
       document.querySelectorAll('.answer-sheet .option').forEach((option, index) => {
         option.addEventListener('click', () => {
           if (index === 1) window.__renderMathQuestion();
+          else document.querySelector('#test-step-question').innerHTML = savedQuestionHtml;
         });
       });
     });
@@ -725,26 +737,26 @@ function trueFalseRow(key, text, token) {
     assert.equal(practiceExam.questions[0].sourceId, '13039222');
     assert.equal(practiceExam.questions[0].prompt, 'Trong các câu sau đây, câu nào không phải là mệnh đề?');
     assert.deepEqual(practiceExam.questions[0].choices.map(choice => choice.label), ['A', 'B', 'C', 'D']);
-    await send(practicePage, {
+    const practiceLoad = await send(practicePage, {
       action: 'OL_LOAD_DATABASE',
       json: [{ cau: 1, loai: 'MCQ', dap_an: 'B' }]
     });
-    await send(practicePage, { action: 'OL_START_BOT' });
-    await practicePage.waitForFunction(() => window.__BOT_RUNNING__ === false);
+    assert.equal(practiceLoad.ok, false);
+    assert.match(practiceLoad.error, /Không thể đọc trước toàn bộ đề luyện tập/);
     const practiceState = await practicePage.evaluate(() => ({
       selected: window.__practiceSelected,
       answerClicks: window.__practiceAnswerClicks,
       nextClicks: window.__practiceNextClicks,
       currentQuestion: document.querySelector('.question-header .num').innerText,
-      done: window.__runtimeMessages.some(message => message.action === 'BOT_DONE' && message.completed === 1),
-      errors: window.__runtimeMessages.filter(message => message.action === 'BOT_ERROR').map(message => message.error)
+      done: (window.__runtimeMessages || []).some(message => message.action === 'BOT_DONE' && message.completed === 1),
+      errors: (window.__runtimeMessages || []).filter(message => message.action === 'BOT_ERROR').map(message => message.error)
     }));
     assert.deepEqual(practiceState, {
-      selected: 'B',
-      answerClicks: 1,
-      nextClicks: 1,
-      currentQuestion: '2',
-      done: true,
+      selected: null,
+      answerClicks: 0,
+      nextClicks: 0,
+      currentQuestion: '1',
+      done: false,
       errors: []
     });
     await practicePage.close();
@@ -786,6 +798,7 @@ function trueFalseRow(key, text, token) {
       action: 'OL_LOAD_DATABASE',
       json: [{ cau: 1, id: '12893605', loai: 'MCQ', dap_an: 'A', noi_dung_dap_an: '$10^{-2}$ pm.' }]
     });
+    assert.equal(mathLoad.ok, true, mathLoad.error);
     assert.equal(mathLoad.answers[0].dap_an, 'A');
     assert.equal(mathLoad.answers[0].noi_dung_dap_an, '10^{-2} pm.');
     await send(mathJaxPage, { action: 'OL_START_BOT' });
@@ -899,13 +912,12 @@ function trueFalseRow(key, text, token) {
         <div class="question-info"><div class="num">Câu: 1 <span>#8000</span></div></div>
         <div class="question-name">Câu khác đang mở.</div>
       </div></div>`);
-    const deferredTf = await send(tfSafetyPage, {
-      action: 'OL_LOAD_DATABASE', json: [{
+    const tfEntries = [{
         cau: 1, id: '8001', loai: 'TF', dap_an: { a: 'Đúng', b: 'Sai' },
         noi_dung_cac_y: { a: '$x^2$', b: '$x^4$' }
-      }]
-    });
-    assert.equal(deferredTf.ok, true);
+      }];
+    const deferredTf = await send(tfSafetyPage, { action: 'OL_LOAD_DATABASE', json: tfEntries });
+    assert.equal(deferredTf.ok, false, 'Unrendered foreign TF entries cannot replace the database');
     await tfSafetyPage.evaluate(body => {
       document.querySelector('.question-info .num').innerHTML = 'Câu: 1 <span>#8001</span>';
       document.querySelector('.question-container').insertAdjacentHTML('beforeend', body);
@@ -914,10 +926,10 @@ function trueFalseRow(key, text, token) {
     }, trueFalseRow('a', '<mjx-container><mjx-assistive-mml><math><msup><mi>x</mi><mn>2</mn></msup></math></mjx-assistive-mml></mjx-container>', 'safe-a')
       + trueFalseRow('b', '<mjx-container><mjx-assistive-mml><math><msup><mi>x</mi><mn>3</mn></msup></math></mjx-assistive-mml></mjx-container>', 'safe-b')
       + '<div class="submit-bar"><button>BỎ QUA</button></div>');
-    await send(tfSafetyPage, { action: 'OL_START_BOT' });
-    await tfSafetyPage.waitForFunction(() => window.__BOT_RUNNING__ === false);
+    const tfMismatch = await send(tfSafetyPage, { action: 'OL_LOAD_DATABASE', json: tfEntries });
+    assert.equal(tfMismatch.ok, false);
     assert.equal(await tfSafetyPage.evaluate(() => window.__tfSafetyClicks), 0, 'Validate every statement before clicking any TF radio');
-    assert.match(await tfSafetyPage.evaluate(() => window.__runtimeMessages.filter(m => m.action === 'BOT_ERROR').at(-1).error), /ý b/);
+    assert.match(tfMismatch.error, /ý b/);
     await tfSafetyPage.close();
 
     const inequalityPage = await mount(browser, `
@@ -960,14 +972,17 @@ function trueFalseRow(key, text, token) {
           document.querySelector('.question-info .num').innerHTML = 'Câu: 1 <span>#99999</span>';
         });
       }
-      const loaded = await send(inequalityPage, {
+      let loaded = await send(inequalityPage, {
         action: 'OL_LOAD_DATABASE',
         json: [{ cau: 1, id: '13537524', loai: 'MCQ', dap_an: 'B', noi_dung_dap_an: answerText }]
       });
-      assert.equal(loaded.answers[0].dap_an, deferred ? 'B' : 'D', 'Remap only when the matching question is rendered');
+      if (deferred) assert.equal(loaded.ok, false, 'Do not commit an answer for a different current ID');
       await inequalityPage.evaluate(() => {
         document.querySelector('.question-info .num').innerHTML = 'Câu: 1 <span>#13537524</span>';
       });
+      if (deferred) loaded = await send(inequalityPage, { action: 'OL_LOAD_DATABASE', json: [{ cau: 1, id: '13537524', loai: 'MCQ', dap_an: 'B', noi_dung_dap_an: answerText }] });
+      assert.equal(loaded.ok, true, loaded.error);
+      assert.equal(loaded.answers[0].dap_an, 'D');
       await send(inequalityPage, { action: 'OL_START_BOT' });
       await inequalityPage.waitForFunction(() => window.__BOT_RUNNING__ === false);
       const result = await inequalityPage.evaluate(() => ({
@@ -985,10 +1000,11 @@ function trueFalseRow(key, text, token) {
     });
     const suppliedDatabase = JSON.parse(fs.readFileSync(path.join(root, 'tests/fixtures/inequality-database.json'), 'utf8'));
     const suppliedLoad = await send(inequalityPage, { action: 'OL_LOAD_DATABASE', json: suppliedDatabase });
-    assert.equal(suppliedLoad.ok, true, suppliedLoad.error);
-    assert.equal(suppliedLoad.count, 19);
-    assert.equal(suppliedLoad.answers.find(answer => answer.id === '13537524').dap_an, 'D');
-    assert.ok(suppliedLoad.answers.find(answer => answer.id === '13537524').math_content.answer);
+    assert.equal(suppliedLoad.ok, false, 'A one-question DOM cannot validate a nineteen-question database');
+    assert.ok(suppliedLoad.report.issues.some(i => i.code === 'QUESTION_NOT_FOUND'));
+    const currentLoad = await send(inequalityPage, { action: 'OL_LOAD_DATABASE', json: suppliedDatabase.filter(e => e.id === '13537524') });
+    assert.equal(currentLoad.ok, true, currentLoad.error);
+    assert.equal(currentLoad.answers[0].dap_an, 'D');
     await inequalityPage.evaluate(() => {
       document.querySelector('.question-info .num').innerHTML = 'Câu: 1 <span>#13537528</span>';
       const formulas = [
@@ -1002,9 +1018,7 @@ function trueFalseRow(key, text, token) {
       });
     });
     const mixedLoad = await send(inequalityPage, { action: 'OL_LOAD_DATABASE', json: suppliedDatabase });
-    assert.equal(mixedLoad.ok, true, mixedLoad.error);
-    assert.equal(mixedLoad.count, 19);
-    assert.equal(mixedLoad.answers.find(answer => answer.id === '13537528').dap_an, 'C');
+    assert.equal(mixedLoad.ok, false, 'Foreign/unread questions cannot be committed with the current answer');
     const singleMixedLoad = await send(inequalityPage, { action: 'OL_LOAD_DATABASE', json: [suppliedDatabase[0]] });
     assert.equal(singleMixedLoad.ok, true, singleMixedLoad.error);
     await send(inequalityPage, { action: 'OL_START_BOT' });
@@ -1027,9 +1041,7 @@ function trueFalseRow(key, text, token) {
       window.__runtimeMessages = [];
     });
     const proseLoad = await send(inequalityPage, { action: 'OL_LOAD_DATABASE', json: suppliedDatabase });
-    assert.equal(proseLoad.ok, true, proseLoad.error);
-    assert.equal(proseLoad.count, 19);
-    assert.equal(proseLoad.answers.find(answer => answer.id === '12495418').dap_an, 'C');
+    assert.equal(proseLoad.ok, false);
     await inequalityPage.evaluate(() => {
       document.querySelector('.question-info .num').innerHTML = 'Câu: 1 <span>#12495418</span>';
     });
@@ -1389,14 +1401,14 @@ function trueFalseRow(key, text, token) {
                 { cau: 1, loai: 'MCQ', dap_an: 'A' },
                 { cau: 2, loai: 'TF', dap_an: { a: 'Đúng', b: 'Sai' } },
                 { cau: 3, loai: 'MCQ', dap_an: 'A' }
-              ]) }] } }]
+              ].map(e => ({ ...e, snapshot_id: window.__geminiRequestBody.contents[0].parts[0].text.match(/snapshot_id: ([a-f0-9]+)/)[1] }))) }] } }]
             };
           }
         };
       };
     });
     const apiSolve = await send(apiPage, { action: 'OL_CALL_AI_SOLVE' });
-    assert.equal(apiSolve.ok, true);
+    assert.equal(apiSolve.ok, true, apiSolve.error);
     assert.equal(apiSolve.imageCount, 1);
     const { math_content: mcqMathContent, ...mcqSolved } = apiSolve.answers[0];
     assert.ok(mcqMathContent.answer.segments.length);

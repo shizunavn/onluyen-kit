@@ -29,11 +29,22 @@ cases.different.push(['1/2x+5/2', '$\\frac{1}{2x}+\\frac{5}{2}$']);
 cases.different.push([prosePrefix + 'y=2/1x+5/2' + proseSuffix, prosePrefix + fractionFormula + proseSuffix]);
 cases.different.push([prosePrefix + 'y=1/2x+5/2 (bao gồm đường thẳng).', prosePrefix + fractionFormula + proseSuffix]);
 cases.unsupported.push('1/2/3', '1/2^3');
+// Renderer transformations should preserve a whole mixed sentence, not merely
+// a formula tested in isolation. These cases also run unchanged in the browser.
+for (let n = 1; n <= 12; n++) {
+  const value = `Cho số ${n} và điểm ABC: x, y thỏa mãn x+${n}≤20.`;
+  const atom = body => `<math><mstyle mathvariant="italic"><mrow>${body}</mrow></mstyle></math>`;
+  const rendered = `<div><span>Cho số&nbsp;</span>${atom(`<mn>${n}</mn>`)} và điểm ${atom('<mi>A</mi>')}${atom('<mi>B</mi><mi>C</mi>')}: ${atom('<mi>x</mi>')}, ${atom('<mi>y</mi>')} thỏa mãn ${atom(`<mi>x</mi><mo>+</mo><mn>${n}</mn><mo>&le;</mo><mn>20</mn>`)}.</div>`;
+  const delimited = `Cho số $${n}$ và điểm $ABC$: $x,y$ thỏa mãn $x+${n}\\le20$.`;
+  for (const pair of [[value, rendered], [rendered, delimited], [value, delimited]]) cases.equal.push(pair);
+  cases.different.push([value, value.replace(`x+${n}`, `x-${n}`)]);
+}
 for (const [a, b] of cases.equal) {
   assert.equal(math.compare(a, b).status, 'equal', `${a} must equal ${b}`);
   assert.equal(math.compare(b, a).status, 'equal');
   assert.equal(math.compare(math.metadata(a), JSON.parse(JSON.stringify(math.metadata(b)))).status, 'equal');
   assert.equal(math.compare(math.canonicalize(a), math.canonicalize(b)).status, 'equal');
+  assert.equal(math.canonicalize(math.metadata(a)).key, math.canonicalize(a).key);
 }
 for (const [a, b] of cases.different) assert.equal(math.compare(a, b).status, 'different', `${a} must differ from ${b}`);
 assert.equal(math.compare(math.canonicalize('x+y'), math.canonicalize('x-y')).status, 'different');

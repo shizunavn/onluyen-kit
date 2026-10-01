@@ -19,6 +19,12 @@ Extension chạy trực tiếp, không cần Node.js hoặc bước build. Khi c
 
 Prompt có thể kèm ảnh tải xuống. Đính kèm những ảnh đó khi gửi prompt cho AI để xử lý phương án hình vẽ. JSON nên giữ ID câu, ID lựa chọn và nội dung đáp án; chữ A/B/C/D có thể đổi khi đề xáo trộn.
 
+Trước khi tự điền, tiện ích đọc và kiểm tra toàn bộ đề. Nếu API thiếu câu, nó mở từng câu bằng thanh điều hướng rồi trở về câu ban đầu, chưa chọn đáp án. Một lỗi ở bất kỳ câu nào sẽ chặn cả lượt tự điền và giữ database cũ. Trang luyện tập không cho đọc trước đủ đề sẽ được báo rõ thay vì trả lời để mở câu tiếp theo.
+
+**Kiểm tra toàn bộ đề** kiểm tra JSON trong ô mà không thay database. **Xuất báo cáo lỗi** tải báo cáo JSON cục bộ, gồm số câu, ID, nguồn công thức và phần không khớp. Bạn có thể gửi file này cùng cách tái hiện qua Feedback; tiện ích không tự gửi báo cáo.
+
+Prompt mới có `snapshot_id`. Chép đúng trường này vào đáp án nếu chỉ dùng chữ cái, khóa a/b/c/d hoặc câu không có ID. Token chỉ có hiệu lực với snapshot của lần tạo prompt đó; database cũ chỉ có vị trí mà không có căn cứ ánh xạ sẽ bị từ chối. Khi lựa chọn đã được xác minh, tiện ích lưu nội dung và nguồn công thức để đối chiếu lại sau khi xáo trộn.
+
 Ví dụ định dạng đáp án:
 
 ```json
@@ -61,6 +67,8 @@ Runner hỏi thông tin đăng nhập khi chạy. Có thể dùng `--gemini-conf
 `--dry-run` vẫn có thể chọn và lưu đáp án trên trang, nhưng không nộp bài cuối cùng. Thêm `--submit` khi muốn nộp. `--headless` chạy không hiện cửa sổ trình duyệt. Trên Windows có thể dùng `run-bulk-dry.cmd` hoặc `run-bulk.cmd` (script thứ hai có nộp bài).
 
 Cache và log được tạo trong `cache/` và `logs/`. Các thư mục này và cấu hình key được bỏ qua bởi Git. `bulk-tests.txt` trong repo chỉ chứa ví dụ; đừng commit link bài cá nhân khi chỉnh file này.
+
+CLI dùng cùng bộ kiểm tra với extension. Khi chạy gặp lỗi đối chiếu, báo cáo được lưu tại `cache/onluyen-match-report.json`.
 
 ## Phát triển
 

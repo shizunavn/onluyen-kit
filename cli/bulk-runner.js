@@ -7,12 +7,20 @@ const readline = require('node:readline');
 const crypto = require('node:crypto');
 const puppeteer = require('puppeteer');
 const math = require('../math-content');
+const promptSnapshots = new WeakMap();
 
 const ROOT = path.resolve(__dirname, '..');
 const CONTENT_SOURCE = fs.readFileSync(path.join(ROOT, 'content.js'), 'utf8');
 const MATH_SOURCE = fs.readFileSync(path.join(ROOT, 'math-content.js'), 'utf8');
 const INJECT_SOURCE = fs.readFileSync(path.join(ROOT, 'inject.js'), 'utf8');
 const DEFAULT_MODELS = ['gemini-3.5-flash', 'gemini-3-flash-preview', 'gemini-2.5-flash'];
+
+function exportMatchReport(report) {
+  const reportFile = path.join(ROOT, 'cache', 'onluyen-match-report.json');
+  fs.mkdirSync(path.dirname(reportFile), { recursive: true });
+  fs.writeFileSync(reportFile, JSON.stringify(report, null, 2));
+  console.error(`Báo cáo kiểm tra: ${reportFile}`);
+}
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -319,9 +327,12 @@ function buildPrompt(questions) {
       if (result.status !== 'ok') throw new Error(`Câu ${question.number}: ${result.reason}. Không thể tạo prompt từ công thức chưa đọc được.`);
     }
   }
+  const snapshot = { id: crypto.randomUUID(), signature: math.signature(questions) };
+  promptSnapshots.set(questions, snapshot);
   const lines = [
     'Giải chính xác các câu trắc nghiệm sau.',
     'Chỉ trả về một mảng JSON, không giải thích.',
+    `snapshot_id: ${snapshot.id}. Chép trường "snapshot_id" này vào từng đáp án; bắt buộc khi thiếu ID câu hoặc chỉ trả đáp án theo vị trí.`,
     'MCQ: {"cau":1,"id":"123456","loai":"MCQ","dap_an":"A","noi_dung_dap_an":"Nội dung phương án A"}',
     'Với đáp án là hình, chép id_dap_an nếu có hoặc anh_dap_an: ["URL/data:image base64 của phương án"]. Không mô tả hình thay cho nội dung đáp án. Nếu phương án không có chữ, bỏ noi_dung_dap_an.',
     'Ảnh base64 được gửi dưới dạng ảnh. Không chép chuỗi base64 dài: dùng id_dap_an; nếu không có ID, chỉ trả chữ cái của snapshot đề này và bỏ noi_dung_dap_an. Runner sẽ lưu nguồn ảnh từ lựa chọn đó.',
@@ -353,11 +364,10 @@ function buildPrompt(questions) {
 }
 
 function validateAndEnrichAnswers(rawAnswers, questions) {
-  const byNumber = new Map(rawAnswers.map(entry => [Number(entry.cau ?? entry.q ?? entry.number), entry]));
-  return questions.map(question => {
-    const entry = byNumber.get(question.number);
-    if (!entry) throw new Error(`AI thiếu đáp án câu ${question.number}.`);
-    const answer = entry.dap_an ?? entry.answer;
+  const snapshot = promptSnapshots.get(questions);
+  const validation = math.validateExam(questions, rawAnswers, { snapshotId: snapshot?.id, snapshotSignature: snapshot?.signature });
+  if (!validation.ok) throw Object.assign(new Error(validation.issues.map(i => `Câu ${i.number ?? '?'}: ${i.reason}`).join('\n')), { report: math.matchReport(validation, { cliVersion: require('../package.json').version }) });
+  return validation.mappings.map(({ question, entry, choice: verifiedChoice, answer }) => {
     if (question.answerType === 'SHORT') {
       const value = String(answer ?? '').trim();
       if (!value) throw new Error(`Đáp án trả lời ngắn câu ${question.number} không hợp lệ.`);
@@ -378,7 +388,7 @@ function validateAndEnrichAnswers(rawAnswers, questions) {
       const verified = suppliedImages != null || suppliedId != null || suppliedText
         ? math.resolveChoice(question.choices, suppliedText, suppliedId, suppliedImages) : null;
       if (verified && verified.status !== 'equal') throw new Error(`Câu ${question.number}: ${verified.reason}.`);
-      const choice = verified?.choice || question.choices.find(item => item.label.toUpperCase() === letter);
+      const choice = verifiedChoice;
       if (!choice) throw new Error(`Không tìm thấy nội dung đáp án ${letter} của câu ${question.number}.`);
       return {
         cau: question.number,
@@ -435,10 +445,18 @@ function normalizedTruth(value) {
 }
 
 function matchBankAnswers(questions, bankEntries) {
-  const byId = new Map(bankEntries
-    .filter(entry => entry.id ?? entry.question_id ?? entry.sourceId)
-    .map(entry => [String(entry.id ?? entry.question_id ?? entry.sourceId).replace(/^#/, ''), entry]));
-  const byNumber = new Map(bankEntries.map(entry => [Number(entry.cau ?? entry.q ?? entry.number), entry]));
+  const byId = new Map();
+  for (const entry of bankEntries) {
+    const id = entry.id ?? entry.question_id ?? entry.sourceId;
+    if (id == null) continue;
+    const key = String(id).replace(/^#/, '');
+    const entries = byId.get(key) || [];
+    const fingerprint = e => JSON.stringify([comparable(e.math_content?.question || questionText(e)), comparable(answerText(e)),
+      e.id_dap_an ?? null, e.anh_dap_an ?? null,
+      answerText(e) ? null : e.dap_an ?? e.answer, e.math_content?.statements ?? e.noi_dung_cac_y ?? null]);
+    if (!entries.some(e => fingerprint(e) === fingerprint(entry))) entries.push(entry);
+    byId.set(key, entries);
+  }
   const byPrompt = new Map();
   for (const entry of bankEntries) {
     const key = comparable(entry.math_content?.question || questionText(entry));
@@ -451,31 +469,22 @@ function matchBankAnswers(questions, bankEntries) {
 
   for (const question of questions) {
     const promptMatches = byPrompt.get(comparable(question.math_content?.question || question.prompt)) || [];
-    const numbered = byNumber.get(question.number);
-    const numberFallback = numbered && !(numbered.id ?? numbered.question_id ?? numbered.sourceId) && !questionText(numbered) ? numbered : null;
-    const entry = (question.sourceId && byId.get(question.sourceId))
-      || (promptMatches.length === 1 ? promptMatches[0] : null)
-      || numberFallback;
+    const idMatches = question.sourceId ? byId.get(question.sourceId) || [] : [];
+    if (idMatches.length > 1) {
+      const validation = math.validateExam([question], idMatches);
+      throw Object.assign(new Error(`Câu ${question.number}: nhiều đáp án cache cho cùng ID.`), { report: math.matchReport(validation) });
+    }
+    const entry = idMatches[0] || (promptMatches.length === 1 ? promptMatches[0] : null);
     const type = String(entry?.loai ?? entry?.type ?? question.answerType).toUpperCase();
     if (!entry) {
       missing.push(question);
       continue;
     }
+    const validation = math.validateExam([question], [entry]);
+    if (!validation.ok) throw Object.assign(new Error(validation.issues.map(i => `Câu ${i.number ?? '?'}: ${i.reason}`).join('\n')), { report: math.matchReport(validation) });
     if (type === 'TF' && typeof (entry.dap_an ?? entry.answer) === 'object') {
       const rawAnswer = entry.dap_an ?? entry.answer;
-      const savedTexts = entry.noi_dung_cac_y ?? entry.statement_texts ?? entry.choiceTexts ?? {};
-      const remapped = {};
-      for (const choice of question.choices) {
-        const keys = [...new Set([...Object.keys(savedTexts), ...Object.keys(entry.math_content?.statements || {})])];
-        const comparisons = keys.map(key => ({ key, ...math.compare(entry.math_content?.statements?.[key] || savedTexts[key], choice.math_content || choice.text) }));
-        const bad = comparisons.find(c => ['unsupported', 'incomplete'].includes(c.status));
-        if (bad) throw new Error(`Câu ${question.number}, ý ${choice.label}: ${bad.reason}`);
-        const candidates = comparisons.filter(c => c.status === 'equal').map(c => c.key);
-        if (candidates.length !== 1) throw new Error(`Câu ${question.number}, ý ${choice.label}: không khớp duy nhất nội dung Đúng/Sai.`);
-        const savedKey = candidates[0];
-        const value = normalizedTruth(rawAnswer[savedKey]);
-        if (value) remapped[choice.label] = value;
-      }
+      const remapped = validation.mappings[0].answer;
       if (question.choices.length && Object.keys(remapped).length !== question.choices.length) {
         missing.push(question);
         continue;
@@ -1022,7 +1031,7 @@ async function sendToContent(page, message) {
 
 async function runAnswers(page, answers, totalQuestions) {
   const loaded = await sendToContent(page, { action: 'OL_LOAD_DATABASE', json: answers });
-  if (!loaded?.ok || loaded.count !== totalQuestions) throw new Error(loaded?.error || `Chỉ nạp được ${loaded?.count || 0}/${totalQuestions} đáp án.`);
+  if (!loaded?.ok || loaded.count !== totalQuestions) throw Object.assign(new Error(loaded?.error || `Chỉ nạp được ${loaded?.count || 0}/${totalQuestions} đáp án.`), { report: loaded?.report });
   await sendToContent(page, { action: 'OL_START_BOT' });
   await page.waitForFunction(() => {
     if (window.__BOT_RUNNING__) return false;
@@ -1032,7 +1041,7 @@ async function runAnswers(page, answers, totalQuestions) {
     done: window.__CLI_RUNTIME_MESSAGES__.find(message => message.action === 'BOT_DONE') || null,
     error: window.__CLI_RUNTIME_MESSAGES__.find(message => message.action === 'BOT_ERROR') || null
   }));
-  if (state.error) throw new Error(state.error.error || 'Bot điền đáp án gặp lỗi.');
+  if (state.error) throw Object.assign(new Error(state.error.error || 'Bot điền đáp án gặp lỗi.'), { report: state.error.report });
   if (!state.done || state.done.completed !== totalQuestions) throw new Error(`Bot chỉ hoàn thành ${state.done?.completed || 0}/${totalQuestions} câu.`);
 }
 
@@ -1283,6 +1292,7 @@ async function runAccountSession(options) {
         results.push(await processTest(page, options.links[index], context));
       } catch (error) {
         console.error(`  LỖI: ${error.message}`);
+        if (error.report) exportMatchReport(error.report);
         results.push({ url: options.links[index], ok: false, error: error.message, finalUrl: page.url() });
       }
     }
@@ -1365,6 +1375,9 @@ module.exports = {
 
 if (require.main === module) {
   main().catch(error => {
+    if (error.report) {
+      exportMatchReport(error.report);
+    }
     console.error(`LỖI: ${error.message}`);
     process.exitCode = 1;
   });
