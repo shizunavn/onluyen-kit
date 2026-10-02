@@ -185,6 +185,74 @@ function trueFalseRow(key, text, token) {
     assert.equal(await terminalNumberPage.$$eval('input:checked', inputs => inputs.length), 0);
     await terminalNumberPage.close();
 
+    const mixedSet = require('./fixtures/mixed-set-builder');
+    // Screenshot-derived markup; use question position 1 to test the bot on
+    // a single-question exam. The supplied entry still has cau: 19, so this
+    // also verifies identity matching rather than number/letter fallback.
+    const mixedSetPage = await mount(browser, `<div id="test-step-question"><div class="question-container">
+      <div class="question-info"><div class="num">Câu: 1 <span>#12759000</span></div></div>
+      <div class="question-name">${mixedSet.question}</div>
+      <div class="options">${mixedSet.options.map((formula, i) => `<div class="question-option">
+        <span class="question-option-label">${String.fromCharCode(65 + i)}</span>
+        <div class="question-option-content"><mjx-container><svg aria-hidden="true"></svg><mjx-assistive-mml>${formula}</mjx-assistive-mml></mjx-container></div>
+        <input type="checkbox"></div>`).join('')}</div>
+      <div class="submit-bar"><button>BỎ QUA</button></div>
+    </div></div>`);
+    await mixedSetPage.evaluate(() => {
+      window.__optionClicks = 0;
+      window.__submitClicks = 0;
+      document.querySelectorAll('.question-option').forEach(option => option.addEventListener('click', () => {
+        window.__optionClicks++;
+        document.querySelectorAll('.question-option input').forEach(input => { input.checked = false; });
+        option.querySelector('input').checked = true;
+        document.querySelector('.submit-bar button').innerText = 'TRẢ LỜI';
+      }));
+      document.querySelector('.submit-bar button').addEventListener('click', event => {
+        window.__submitClicks++;
+        event.currentTarget.innerText = 'KẾT THÚC';
+      });
+    });
+    const mixedSetPrompt = await send(mixedSetPage, { action: 'OL_GET_AI_PROMPT' });
+    assert.equal(mixedSetPrompt.ok, true, mixedSetPrompt.error);
+    assert.match(mixedSetPrompt.prompt, /12759000/);
+    await mixedSetPage.evaluate(() => {
+      window.__ONLUYEN_RAW_DATA__ = { questions: [{ dataStandard: {
+        numberQuestion: 12759000, stepIndex: 0, typeAnswer: 0,
+        languagesData: { vi: { content: document.querySelector('.question-name').innerHTML,
+          options: [...document.querySelectorAll('.question-option-content')].map(el => ({ content: el.innerHTML })) } }
+      } }] };
+    });
+    const mixedSetApiPrompt = await send(mixedSetPage, { action: 'OL_GET_AI_PROMPT' });
+    assert.equal(mixedSetApiPrompt.ok, true, mixedSetApiPrompt.error);
+    assert.match(mixedSetApiPrompt.prompt, /12759000/);
+    const mixedSetImport = await send(mixedSetPage, { action: 'OL_LOAD_DATABASE', json: [mixedSet.answer] });
+    assert.equal(mixedSetImport.ok, true, mixedSetImport.error);
+    assert.equal(mixedSetImport.answers[0].dap_an, 'A');
+    const exportedSet = JSON.parse(mixedSetImport.json);
+    assert.equal(math.compare(exportedSet[0].math_content.answer, mixedSet.answer.noi_dung_dap_an).status, 'equal');
+    assert.equal((await send(mixedSetPage, { action: 'OL_LOAD_DATABASE', json: exportedSet })).ok, true);
+    assert.deepEqual(await mixedSetPage.evaluate(() => [window.__optionClicks, window.__submitClicks]), [0, 0]);
+    const oldSetCache = await mixedSetPage.evaluate(() => JSON.stringify(window.__storageFixture));
+    const wrongSetImport = await send(mixedSetPage, { action: 'OL_LOAD_DATABASE', json: [{ ...mixedSet.answer, noi_dung_dap_an: String.raw`A={x∈\mathbb{R}|3≤x<8}.` }] });
+    assert.equal(wrongSetImport.ok, false, 'An unmatched expression must not fall back to the supplied letter A');
+    assert.equal(await mixedSetPage.evaluate(() => JSON.stringify(window.__storageFixture)), oldSetCache);
+    assert.deepEqual(await mixedSetPage.evaluate(() => [window.__optionClicks, window.__submitClicks]), [0, 0]);
+    await mixedSetPage.evaluate(() => {
+      window.__ONLUYEN_RAW_DATA__ = null;
+      const options = document.querySelector('.options');
+      [...options.children].reverse().forEach(option => options.appendChild(option));
+      options.querySelectorAll('.question-option-label').forEach((label, i) => { label.innerText = String.fromCharCode(65 + i); });
+    });
+    const reorderedSetImport = await send(mixedSetPage, { action: 'OL_LOAD_DATABASE', json: [mixedSet.answer] });
+    assert.equal(reorderedSetImport.ok, true, reorderedSetImport.error);
+    assert.equal(reorderedSetImport.answers[0].dap_an, 'D', 'Resolve the set expression after shuffling all choices');
+    const startedSet = await send(mixedSetPage, { action: 'OL_START_BOT' });
+    assert.equal(startedSet.ok, true, startedSet.error);
+    await mixedSetPage.waitForFunction(() => window.__BOT_RUNNING__ === false);
+    assert.equal(await mixedSetPage.$eval('input:checked', input => input.closest('.question-option').querySelector('.question-option-label').innerText), 'D');
+    assert.deepEqual(await mixedSetPage.evaluate(() => [window.__optionClicks, window.__submitClicks]), [1, 1]);
+    await mixedSetPage.close();
+
     const numberedQuestion = require('./math-cases').numberedQuestion;
     const numberedPage = await mount(browser, `
       <div id="test-step-question"><div class="question-container">

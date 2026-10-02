@@ -83,7 +83,7 @@
         tokens.push({ k: map === supers ? 'sup' : 'sub', v: value }); continue;
       }
       if (vulgar[c]) { tokens.push({ k: 'vulgar', v: c }); i++; continue; }
-      if (c === '√') { tokens.push({ k: 'cmd', v: 'sqrt' }); i++; continue; }
+      if (c === '√') { tokens.push({ k: 'cmd', v: 'sqrt', plain: true }); i++; continue; }
       if (["'", '′', '″', '‴'].includes(c)) {
         tokens.push({ k: 'prime', v: c === '″' ? 2 : c === '‴' ? 3 : 1 }); i++; continue;
       }
@@ -107,28 +107,37 @@
 
   function parseLatex(raw, plain = false) {
     const tokens = tokenize(raw);
-    let pos = 0, depth = 0;
+    let pos = 0, depth = 0, plainMode = plain;
     const peek = () => tokens[pos];
-    function argument(allowEmptyBase = false) {
-      if (!peek()) incomplete('Thiếu đối số công thức');
-      if (peek().k === '{') {
-        pos++; const value = sequence(() => peek()?.k === '}');
-        if (peek()?.k !== '}') incomplete('Thiếu dấu }');
-        if (value.t === 'row' && !value.items.length && !(allowEmptyBase && ['^', '_'].includes(tokens[pos + 1]?.k))) incomplete('Đối số công thức trống');
-        pos++; return value;
-      }
-      if (plain && peek().v === '(') {
-        pos++; const value = sequence(() => peek()?.v === ')');
-        if (peek()?.v !== ')') incomplete('Đối số chưa đóng ngoặc');
-        pos++; return value;
-      }
-      if (peek().k === 'number' && peek().v.length > 1) {
-        if (plain) fail('Đối số nhiều chữ số cần ngoặc {...}');
-        const value = peek().v;
-        tokens.splice(pos, 1, { k: 'number', v: value[0] }, { k: 'number', v: value.slice(1) });
-      }
-      return atom(plain);
+    function argument(allowEmptyBase = false, texArgument = false) {
+      const previousMode = plainMode;
+      if (texArgument) plainMode = false;
+      try {
+        if (!peek()) incomplete('Thiếu đối số công thức');
+        if (peek().k === '{') {
+          pos++;
+          // Braces consumed as an explicit command/script argument group their
+          // contents. Visible set braces outside that argument stay literal.
+          plainMode = false;
+          const value = sequence(() => peek()?.k === '}');
+          if (peek()?.k !== '}') incomplete('Thiếu dấu }');
+          if (value.t === 'row' && !value.items.length && !(allowEmptyBase && ['^', '_'].includes(tokens[pos + 1]?.k))) incomplete('Đối số công thức trống');
+          pos++; return value;
+        }
+        if (plainMode && peek().v === '(') {
+          pos++; const value = sequence(() => peek()?.v === ')');
+          if (peek()?.v !== ')') incomplete('Đối số chưa đóng ngoặc');
+          pos++; return value;
+        }
+        if (peek().k === 'number' && peek().v.length > 1) {
+          if (plainMode) fail('Đối số nhiều chữ số cần ngoặc {...}');
+          const value = peek().v;
+          tokens.splice(pos, 1, { k: 'number', v: value[0] }, { k: 'number', v: value.slice(1) });
+        }
+        return atom(plainMode);
+      } finally { plainMode = previousMode; }
     }
+    const commandArgument = () => argument(false, true);
     function rawGroup() {
       if (peek()?.k !== '{') incomplete('Thiếu nhóm {...}');
       pos++; let result = '', nesting = 1;
@@ -160,7 +169,7 @@
         if (token.k === 'literaltext') return { t: 'textmath', style: 'text', body: { t: 'literal', v: token.v } };
         if (token.k === 'vulgar') return { t: 'fraction', numerator: { t: 'number', v: vulgar[token.v][0] }, denominator: { t: 'number', v: vulgar[token.v][1] } };
         if (token.k === 'fn') return { t: 'function', v: token.v };
-        if (plain && (token.k === '{' || token.k === '}')) return symbol(token.v);
+        if (plainMode && (token.k === '{' || token.k === '}')) return symbol(token.v);
         if (token.k === '{') { pos--; return argument(true); }
         if (token.k === 'char') {
           if (allowFence && ['(', '['].includes(token.v)) {
@@ -201,7 +210,7 @@
         // Keep every following symbol and the surrounding group intact.
         if (['rm', 'rmfamily', 'it', 'itshape'].includes(name)) return null;
         if ('{}[]|'.includes(name)) return symbol(name);
-        if (['frac', 'dfrac', 'tfrac'].includes(name)) return { t: 'fraction', numerator: argument(), denominator: argument() };
+        if (['frac', 'dfrac', 'tfrac'].includes(name)) return { t: 'fraction', numerator: commandArgument(), denominator: commandArgument() };
         if (name === 'sqrt') {
           let degree = { t: 'number', v: '2' };
           if (peek()?.v === '[') {
@@ -209,16 +218,16 @@
             if (peek()?.v !== ']') incomplete('Thiếu ] ở bậc căn');
             pos++;
           }
-          return { t: 'root', degree, body: argument() };
+          return { t: 'root', degree, body: token.plain ? argument() : commandArgument() };
         }
         if (['text', 'operatorname', 'mathrm', 'mathbb', 'mathbf', 'mathcal', 'mathsf'].includes(name)) {
-          const value = argument();
+          const value = commandArgument();
           if (name === 'mathrm') return value;
           if (name === 'operatorname') return { t: 'function', v: render(value) };
           return { t: name === 'text' ? 'textmath' : 'style', style: name, body: value };
         }
         if (['vec', 'overrightarrow', 'hat', 'widehat', 'bar', 'overline', 'dot', 'ddot', 'underline'].includes(name)) {
-          return { t: 'accent', kind: ({ overrightarrow: 'vec', widehat: 'hat', overline: 'bar' })[name] || name, body: argument() };
+          return { t: 'accent', kind: ({ overrightarrow: 'vec', widehat: 'hat', overline: 'bar' })[name] || name, body: commandArgument() };
         }
         if (name === 'begin') {
           const env = rawGroup();
@@ -596,7 +605,7 @@
         }
         if (segment.format === 'latex' || segment.format === 'plain') {
           const raw = segment.raw.trim().replace(/^(\d+),(\d+)$/, '$1.$2');
-          return { t: 'math', body: parseLatex(raw, segment.format === 'plain' && !/\\[A-Za-z]/.test(raw)) };
+          return { t: 'math', body: parseLatex(raw, segment.format === 'plain') };
         }
         if (segment.format === 'mathml') {
           const tree = markup(segment.raw);

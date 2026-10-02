@@ -82,6 +82,47 @@ cases.different.push(['<math><mtable><mtr><mtd><mn>27.</mn></mtd></mtr></mtable>
 cases.different.push(['<math><mn>2.</mn><mn>7</mn></math>', '27']);
 cases.unsupported.push('<math><mn>27..</mn></math>', '<math><mn>27,</mn></math>', '<math><mn>27.5.1</mn></math>');
 assert.equal(math.canonicalize(terminalNumberHtml).status, 'ok', 'User question #12758898 must remain readable');
+const mixedSet = require('./fixtures/mixed-set-builder');
+const setBuilderVariants = [
+  mixedSet.answer.noi_dung_dap_an,
+  'A={x∈ℝ|3≤x<7}.',
+  String.raw`A={x\in\mathbb{R}|3\le x<7}.`,
+  String.raw`A={x∈\mathbb{{R}}|3≤x<7}.`,
+  String.raw`$A=\{x\in\mathbb{R}|3\le x<7\}.$`,
+  mixedSet.options[0],
+  math.text(mixedSet.options[0])
+];
+for (const a of setBuilderVariants) {
+  for (const b of setBuilderVariants) cases.equal.push([a, b]);
+  for (const b of mixedSet.options.slice(1)) cases.different.push([a, b]);
+}
+cases.different.push(
+  [mixedSet.answer.noi_dung_dap_an, String.raw`$A={x\in\mathbb{R}|3\le x<7}.$`],
+  [mixedSet.answer.noi_dung_dap_an, String.raw`A={x∈\mathrm{R}|3≤x<7}.`],
+  [mixedSet.answer.noi_dung_dap_an, String.raw`A={x∈\mathbb{r}|3≤x<7}.`],
+  [mixedSet.answer.noi_dung_dap_an, String.raw`A={x∈\mathbb{R}|3≤x<8}.`],
+  [mixedSet.answer.noi_dung_dap_an, String.raw`A=[x∈\mathbb{R}|3≤x<7].`]
+);
+cases.incomplete.push(String.raw`A={x∈\mathbb{R}|3≤x<7`);
+cases.unsupported.push(String.raw`A={x∈\unknown{R}|3≤x<7}.`);
+// Adding commands must not erase set delimiters or change argument structure.
+cases.equal.push(
+  ['A={-5;-4;-3;-2;-1;0;1}.', String.raw`A={-5;-4;-3;-2;-1;0;\mathrm{1}}.`],
+  ['E={a,b,c,d,f,g,h}', String.raw`E={a,b,c,d,f,g,\mathrm{h}}`],
+  ['X∩Z={0}.', String.raw`X\cap Z={\mathrm{0}}.`],
+  [String.raw`C_{A}B=[-3;2]∪(4;7).`, String.raw`$C_AB=[-3;2]\cup(4;7).$`],
+  [String.raw`A={x|x=\frac12}.`, String.raw`$A=\{x|x=\frac{1}{2}\}.$`],
+  [String.raw`A={x|x=\frac{{1}}{2}}.`, 'A={x|x=1/2}.'],
+  [String.raw`A={x|x=\sqrt{a^{23}}}.`, String.raw`$A=\{x|x=\sqrt{a^{23}}\}.$`],
+  [String.raw`A={x|x=\vec{a}}.`, String.raw`$A=\{x|x=\vec{a}\}.$`],
+  [String.raw`\frac12`, String.raw`$\frac{1}{2}$`]
+);
+cases.different.push([String.raw`C_{A}B=[-3;2]∪(4;7).`, String.raw`C^{A}B=[-3;2]∪(4;7).`]);
+const mixedSetChoices = mixedSet.options.map((text, i) => ({ idOption: `set-${i}`, text }));
+assert.equal(math.resolveChoice(mixedSetChoices, mixedSet.answer.noi_dung_dap_an).choice, mixedSetChoices[0]);
+assert.equal(math.resolveChoice([...mixedSetChoices].reverse(), mixedSet.answer.noi_dung_dap_an).choice, mixedSetChoices[0]);
+assert.equal(math.resolveChoice(mixedSetChoices, mixedSet.answer.noi_dung_dap_an, 'set-1').choice, null);
+assert.equal(math.resolveChoice([mixedSetChoices[0], mixedSetChoices[0]], mixedSet.answer.noi_dung_dap_an).choice, null);
 // Renderer transformations should preserve a whole mixed sentence, not merely
 // a formula tested in isolation. These cases also run unchanged in the browser.
 for (let n = 1; n <= 12; n++) {
@@ -158,6 +199,10 @@ for (let exponent = 1; exponent <= 20; exponent++) {
     }), cases);
     for (const status of Object.keys(actual)) assert.deepEqual(actual[status], cases[status].map(() => status));
     const resolutionCases = [
+      { choices: mixedSetChoices, saved: mixedSet.answer.noi_dung_dap_an },
+      { choices: [...mixedSetChoices].reverse(), saved: mixedSet.answer.noi_dung_dap_an },
+      { choices: mixedSetChoices, saved: mixedSet.answer.noi_dung_dap_an, optionId: 'set-1' },
+      { choices: [mixedSetChoices[0], mixedSetChoices[0]], saved: mixedSet.answer.noi_dung_dap_an },
       { choices: mixedChoices, saved: '2x-3y≤5.' },
       { choices: mixedChoices, saved: math.metadata('2x-3y≤5.', 'inferred') },
       { choices: [{ text: '102' }, { text: '10²' }], saved: '102' },
