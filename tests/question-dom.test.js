@@ -126,6 +126,33 @@ function trueFalseRow(key, text, token) {
     assert.match(dateApiPrompt.prompt, /Ngày 18\/12\/2021, một số trung tâm y tế/);
     await datePage.close();
 
+    const setHtml = fs.readFileSync(path.join(__dirname, 'fixtures/set-one-sided-fences-question.html'), 'utf8');
+    const setPage = await mount(browser, `<div id="test-step-question"><div class="question-container">${setHtml}</div></div>`);
+    const setPrompt = await send(setPage, { action: 'OL_GET_AI_PROMPT' });
+    assert.equal(setPrompt.ok, true, setPrompt.error);
+    assert.match(setPrompt.prompt, /12758930/);
+    assert.match(setPrompt.prompt, /right\./);
+    const setExam = await send(setPage, { action: 'OL_GET_EXAM' });
+    assert.equal(setExam.questions[0].choices.length, 4);
+    const math = require('../math-content');
+    for (const choice of setExam.questions[0].choices) assert.equal(math.compare(choice.math_content, choice.text).status, 'equal');
+    assert.equal(math.compare(setExam.questions[0].choices[2].math_content, setExam.questions[0].choices[3].math_content).status, 'different', 'A brace system and square-bracket alternatives must remain different');
+    await setPage.evaluate(() => {
+      window.__ONLUYEN_RAW_DATA__ = { questions: [{ dataStandard: {
+        numberQuestion: 12758930, stepIndex: 11, typeAnswer: 0,
+        languagesData: { vi: { content: document.querySelector('.question-name').innerHTML,
+          options: [...document.querySelectorAll('.question-option-content')].map(el => ({ content: el.innerHTML })) } }
+      } }] };
+    });
+    const setApiPrompt = await send(setPage, { action: 'OL_GET_AI_PROMPT' });
+    assert.equal(setApiPrompt.ok, true, setApiPrompt.error);
+    assert.match(setApiPrompt.prompt, /right\./);
+    const setImport = await send(setPage, { action: 'OL_LOAD_DATABASE', json: [{ cau: 12, id: '12758930', loai: 'MCQ', dap_an: 'D', noi_dung_dap_an: setExam.questions[0].choices[3].text }] });
+    assert.equal(setImport.ok, true, setImport.error);
+    assert.equal(setImport.answers[0].dap_an, 'D');
+    assert.equal(await setPage.$$eval('input:checked', inputs => inputs.length), 0, 'Reading and matching a system never selects an answer');
+    await setPage.close();
+
     const numberedQuestion = require('./math-cases').numberedQuestion;
     const numberedPage = await mount(browser, `
       <div id="test-step-question"><div class="question-container">
@@ -657,6 +684,14 @@ function trueFalseRow(key, text, token) {
     await resumeMathPage.evaluate(() => {
       const savedQuestionHtml = document.querySelector('#test-step-question').innerHTML;
       window.__mathSelected = null;
+      window.__resumeSkipClicks = 0;
+      window.__renderSavedQuestion = () => {
+        document.querySelector('#test-step-question').innerHTML = savedQuestionHtml;
+        document.querySelector('.submit-bar button').addEventListener('click', () => {
+          window.__resumeSkipClicks++;
+          window.__renderMathQuestion();
+        });
+      };
       window.__renderMathQuestion = () => {
         document.querySelector('#test-step-question').innerHTML = `
           <div class="question-container">
@@ -678,9 +713,10 @@ function trueFalseRow(key, text, token) {
       document.querySelectorAll('.answer-sheet .option').forEach((option, index) => {
         option.addEventListener('click', () => {
           if (index === 1) window.__renderMathQuestion();
-          else document.querySelector('#test-step-question').innerHTML = savedQuestionHtml;
+          else window.__renderSavedQuestion();
         });
       });
+      window.__renderSavedQuestion();
     });
     await send(resumeMathPage, {
       action: 'OL_LOAD_DATABASE',
@@ -705,6 +741,7 @@ function trueFalseRow(key, text, token) {
       done: true,
       errors: []
     });
+    assert.equal(await resumeMathPage.evaluate(() => window.__resumeSkipClicks), 1, 'Click Skip for the matching saved answer instead of bypassing it through the sidebar');
     await resumeMathPage.close();
 
     const practicePage = await mount(browser, `

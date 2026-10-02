@@ -29,23 +29,49 @@ const exported = JSON.stringify(math.matchReport(math.validateExam([question], [
 assert.ok(!/SECRET_/.test(exported));
 assert.ok(JSON.parse(exported).issues[0].diagnostic);
 
-async function mount(browser) {
+async function mount(browser, mode = {}) {
   const page = await browser.newPage();
   await page.setRequestInterception(true);
   page.on('request', r => r.respond({ status: 200, contentType: 'text/html', body: '<html></html>' }));
   await page.goto('https://app.onluyen.vn/school/test/step/preflight-fixture');
   await page.setContent('<div class="answer-sheet"><button class="option">1</button><button class="option">2</button></div><div id="test-step-question"><div class="question-container"></div></div>');
-  await page.evaluate(first => {
-    window.__clicks = 0; window.__submits = 0; window.__navigation = 0; window.__messages = []; window.__store = {}; window.__mutate = false;
+  await page.evaluate(({ first, mode }) => {
+    window.__clicks = 0; window.__submits = 0; window.__navigation = 0; window.__skips = 0; window.__fills = 0; window.__messages = []; window.__store = {}; window.__mutate = false;
     window.__texts = [[first, 'Lựa chọn khác.'], ['Đáp án cuối.', 'Sai khác.']];
     window.__render = n => {
       const root = document.querySelector('.question-container');
       root.innerHTML = `<div class="question-info"><div class="num">Câu: ${n} <span>#${n === 1 ? '12905165' : '9999'}</span></div></div><div class="question-name">Đề câu ${n}.</div>${__texts[n - 1].map((t, i) => `<div class="question-option"><span class="question-option-label">${i ? 'B' : 'A'}</span><div class="question-option-content">${t}</div><input type="checkbox"></div>`).join('')}<div class="submit-bar"><button>BỎ QUA</button></div>`;
-      root.querySelectorAll('.question-option').forEach(el => el.addEventListener('click', () => {
-        __clicks++; el.querySelector('input').checked = true; root.querySelector('button').innerText = 'TRẢ LỜI';
+      const updateButton = () => { if (n !== 1 || !mode.keepSkip) root.querySelector('button').innerText = 'TRẢ LỜI'; };
+      if (n === 1 && mode.type === 'SHORT') {
+        root.querySelectorAll('.question-option').forEach(el => el.remove());
+        root.querySelector('.question-name').insertAdjacentHTML('afterend', `<div class="answer-input"><input type="text" value="${mode.preset === 'correct' ? '-2,5' : mode.preset === 'wrong' ? '99' : ''}"></div>`);
+        root.querySelector('.answer-input input').addEventListener('input', e => { __fills++; if (mode.refuseChange) e.target.value = '99'; else updateButton(); });
+      } else if (n === 1 && mode.type === 'TF') {
+        root.querySelectorAll('.question-option').forEach((el, i) => {
+          el.outerHTML = `<div class="child-content"><span class="option-text"><span class="option-char">${i ? 'b' : 'a'})</span><span class="fadein">${__texts[0][i]}</span></span><div class="true-false"><input type="radio" name="tf-${i}" value="true" ${!i && mode.preset ? 'checked' : ''}><input type="radio" name="tf-${i}" value="false" ${i && mode.preset === 'correct' ? 'checked' : ''}></div></div>`;
+        });
+        root.querySelectorAll('.true-false input').forEach(input => input.addEventListener('click', () => { __clicks++; updateButton(); }));
+      } else if (n === 1 && mode.preset) {
+        root.querySelectorAll('.question-option input').forEach((input, i) => { input.checked = mode.preset === 'multiple' || (mode.preset === 'correct' ? !i : !!i); });
+      }
+      if (n === 2 && mode.lastSavedSkip) root.querySelector('.question-option input').checked = true;
+      if (n === 1 && mode.disabledSkip) {
+        const button = root.querySelector('button'); button.disabled = true;
+        setTimeout(() => { button.disabled = false; }, 800);
+      }
+      root.querySelectorAll('.question-option').forEach(el => el.addEventListener('click', e => {
+        __clicks++;
+        if (n === 1 && mode.refuseChange) { e.preventDefault(); return; }
+        root.querySelectorAll('.question-option input').forEach(input => { input.checked = false; });
+        el.querySelector('input').checked = true; updateButton();
       }));
       root.querySelector('button').addEventListener('click', () => {
-        __submits++; if (n === 1) __render(2); else root.querySelector('button').innerText = 'KẾT THÚC';
+        if (root.querySelector('button').innerText === 'BỎ QUA') __skips++;
+        __submits++; if (n === 1) __render(2); else if (!mode.lastSavedSkip) root.querySelector('button').innerText = 'KẾT THÚC';
+        if (n === 2 && mode.lastSavePending) {
+          const button = root.querySelector('button'); button.innerText = 'TRẢ LỜI'; button.disabled = true;
+          setTimeout(() => { button.innerText = 'KẾT THÚC'; button.disabled = false; }, 500);
+        }
       });
     };
     document.querySelectorAll('.answer-sheet button').forEach(b => b.addEventListener('click', () => { __navigation++; setTimeout(() => __render(Number(b.innerText)), 50); }));
@@ -56,7 +82,7 @@ async function mount(browser) {
         sendMessage: async m => { __messages.push(m); if (__mutate && m.action === 'BOT_PROGRESS' && m.text.startsWith('Đang điền')) { __texts[0][0] = 'Nội dung đã thay đổi.'; document.querySelector('.question-option-content').innerHTML = __texts[0][0]; } } },
       storage: { local: { get: (k, cb) => cb(__store), set: v => Object.assign(__store, v) } }
     };
-  }, variants[2]);
+  }, { first: variants[2], mode });
   for (const file of ['math-content.js', 'content.js']) await page.addScriptTag({ content: fs.readFileSync(path.join(__dirname, '..', file), 'utf8') });
   return page;
 }
@@ -100,6 +126,42 @@ const send = (page, payload) => page.evaluate(p => new Promise(resolve => __list
     await directStart.waitForFunction(() => !window.__BOT_RUNNING__);
     assert.deepEqual(await directStart.evaluate(() => [__navigation, __clicks, __submits]), [2, 2, 2], 'Starting with new JSON scans once, then fills each answer');
     await directStart.close();
+
+    for (const [type, preset, firstClicks, fills] of [
+      ['MCQ', 'correct', 0, 0], ['MCQ', null, 1, 0],
+      ['SHORT', 'correct', 0, 0], ['SHORT', null, 0, 1],
+      ['TF', 'correct', 0, 0], ['TF', 'partial', 1, 0]
+    ]) {
+      const skipPage = await mount(browser, { type, preset, keepSkip: true });
+      const firstEntry = type === 'MCQ' ? entry : type === 'SHORT'
+        ? { cau: 1, id: '12905165', loai: 'SHORT', dap_an: '-2,5' }
+        : { cau: 1, id: '12905165', loai: 'TF', dap_an: { a: 'Đúng', b: 'Sai' }, noi_dung_cac_y: { a: answerText, b: 'Lựa chọn khác.' } };
+      const result = await send(skipPage, { action: 'OL_START_BOT', json: [firstEntry, answers[1]] });
+      assert.equal(result.ok, true, result.error);
+      await skipPage.waitForFunction(() => !window.__BOT_RUNNING__);
+      assert.deepEqual(await skipPage.evaluate(() => [__skips, __clicks, __fills, __submits]), [1, firstClicks + 1, fills, 2], `${type} ${preset || 'fresh'}: matching answer advances with Skip, then fills the next question`);
+      assert.deepEqual(await skipPage.evaluate(() => __messages.filter(m => m.action === 'BOT_ERROR')), []);
+      await skipPage.close();
+    }
+    for (const mode of [{ type: 'MCQ', preset: 'multiple' }, { type: 'SHORT', preset: 'wrong', refuseChange: true }]) {
+      const blockedSkip = await mount(browser, { ...mode, keepSkip: true });
+      const firstEntry = mode.type === 'MCQ' ? entry : { cau: 1, id: '12905165', loai: 'SHORT', dap_an: '-2,5' };
+      assert.equal((await send(blockedSkip, { action: 'OL_START_BOT', json: [firstEntry, answers[1]] })).ok, true);
+      await blockedSkip.waitForFunction(() => !window.__BOT_RUNNING__);
+      assert.deepEqual(await blockedSkip.evaluate(() => [__skips, __submits]), [0, 0], 'An ambiguous selection or incorrect short answer must not advance through Skip');
+      assert.ok(await blockedSkip.evaluate(() => __messages.some(m => m.action === 'BOT_ERROR')));
+      await blockedSkip.close();
+    }
+    for (const mode of [{ lastSavedSkip: true }, { disabledSkip: true }, { lastSavedSkip: true, lastSavePending: true }]) {
+      const savedSkip = await mount(browser, { type: 'MCQ', preset: 'correct', keepSkip: true, ...mode });
+      assert.equal((await send(savedSkip, { action: 'OL_START_BOT', json: answers })).ok, true);
+      await savedSkip.waitForFunction(() => !window.__BOT_RUNNING__);
+      assert.deepEqual(await savedSkip.evaluate(() => [__skips, __submits]), [mode.lastSavedSkip ? 2 : 1, 2], 'Click the saved final Skip once, and wait for disabled Skip buttons to become enabled');
+      assert.ok(await savedSkip.evaluate(() => __messages.some(m => m.action === 'BOT_DONE' && m.completed === 2)));
+      assert.deepEqual(await savedSkip.evaluate(() => __messages.filter(m => m.action === 'BOT_ERROR')), []);
+      if (mode.lastSavePending) assert.equal(await savedSkip.$eval('.submit-bar button', button => button.innerText), 'KẾT THÚC', 'A disabled Answer button indicates pending work; wait for the final confirmation');
+      await savedSkip.close();
+    }
 
     const promptReuse = await mount(browser);
     assert.equal((await send(promptReuse, { action: 'OL_GET_AI_PROMPT' })).ok, true);

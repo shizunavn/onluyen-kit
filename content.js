@@ -1024,7 +1024,8 @@
   function recordedMcqAnswerMatches(root, answerEntry) {
     const choices = currentMcqChoices(root);
     const result = math.resolveChoice(choices, answerEntry.answerContent || answerEntry.originalAnswerText || answerEntry.answerText, answerEntry.answerOptionId, answerEntry.answerImages);
-    return result.status === 'equal' && isMcqOptionSelected(result.choice.element);
+    const selected = choices.filter(choice => isMcqOptionSelected(choice.element));
+    return result.status === 'equal' && selected.length === 1 && selected[0] === result.choice;
   }
 
   function currentMcqChoices(root) {
@@ -1047,7 +1048,20 @@
 
   function shortAnswerMatches(root, answerEntry) {
     const input = shortAnswerInput(root);
-    return !!input && normalizeShortAnswer(input.value) === normalizeShortAnswer(answerEntry.answer);
+    const expected = normalizeShortAnswer(answerEntry.answer ?? '');
+    return !!input && !!expected && normalizeShortAnswer(input.value) === expected;
+  }
+
+  function recordedAnswerMatches(root, answerEntry) {
+    if (String(answerEntry.type || '').toUpperCase() === 'SHORT' || shortAnswerInput(root)) return shortAnswerMatches(root, answerEntry);
+    if (answerEntry.answer && typeof answerEntry.answer === 'object') {
+      try {
+        const planned = trueFalseAnswerPlan(root, answerEntry, currentQuestionNumber());
+        return planned.length > 0 && planned.every(radio => radio.checked
+          && [...radio.closest('.child-content, tr, .true-false').querySelectorAll('input[type="radio"]')].filter(input => input.checked).length === 1);
+      } catch (_error) { return false; }
+    }
+    return typeof answerEntry.answer === 'string' && recordedMcqAnswerMatches(root, answerEntry);
   }
 
   async function fillShortAnswer(root, answer) {
@@ -1066,7 +1080,7 @@
     input.dispatchEvent(new Event('change', { bubbles: true }));
     input.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: value.slice(-1) || '0' }));
     input.blur();
-    return waitForCondition(() => shortAnswerMatches(root, { answer: value }) && !!findAnswerButton(), 2500, 50);
+    return waitForCondition(() => shortAnswerMatches(root, { answer: value }) && !!findCompletionButton({ type: 'SHORT', answer: value }), 2500, 50);
   }
 
   async function activateMcqOption(option) {
@@ -1753,11 +1767,21 @@
     }, timeoutMs, 80);
   }
 
-  function findAnswerButton() {
+  function findAnswerButton(includeDisabled = false) {
     const root = getCurrentQuestionRoot();
     return [...root.querySelectorAll('.submit-bar button, button')]
       .filter(isVisible)
-      .find(button => /^trả lời$/i.test(cleanText(button.innerText)) && !button.disabled) || null;
+      .find(button => /^trả lời$/i.test(cleanText(button.innerText)) && (includeDisabled || !button.disabled)) || null;
+  }
+
+  function findSkipButton(includeDisabled = false) {
+    return [...getCurrentQuestionRoot().querySelectorAll('.submit-bar button, button')]
+      .filter(isVisible)
+      .find(button => /^bỏ qua$/i.test(cleanText(button.innerText)) && (includeDisabled || !button.disabled)) || null;
+  }
+
+  function findCompletionButton(answerEntry) {
+    return findAnswerButton() || (recordedAnswerMatches(getCurrentQuestionRoot(), answerEntry) ? findSkipButton() : null);
   }
 
   function findNextQuestionButton() {
@@ -1813,6 +1837,25 @@
     return [...root.querySelectorAll('.true-false')].filter(hasTrueFalseRadio);
   }
 
+  function trueFalseAnswerPlan(root, answerEntry, qNum) {
+    const rows = getTrueFalseRows(root);
+    const rowsByKey = new Map(rows.map((row, index) => [normalizeSubQuestionKey(row.querySelector('.option-char')?.innerText, index), row]));
+    const entries = Object.entries(answerEntry.answer);
+    if (!entries.length || entries.length !== rows.length) throw new Error(`Câu ${qNum}: thiếu nội dung các ý Đúng/Sai.`);
+    const planned = [], used = new Set();
+    for (let index = 0; index < entries.length; index++) {
+      const [key, value] = entries[index];
+      const saved = answerEntry.statementContents?.[key] || answerEntry.choiceTexts?.[key];
+      const candidates = saved ? rows.filter(row => math.compare(saved, math.metadata(row.querySelector('.option-text .fadein') || row.querySelector('.option-text'))).status === 'equal') : [rowsByKey.get(normalizeSubQuestionKey(key, index))];
+      if (candidates.length !== 1 || !candidates[0] || used.has(candidates[0])) throw new Error(`Câu ${qNum}, ý ${key}: không khớp duy nhất công thức Đúng/Sai.`);
+      const expected = truthValue(value);
+      const radio = [...candidates[0].querySelectorAll('input[type="radio"]')].find(input => truthValue(input.value) === expected);
+      if (expected === null || !radio) throw new Error(`Câu ${qNum}, ý ${key}: thiếu lựa chọn Đúng/Sai.`);
+      used.add(candidates[0]); planned.push(radio);
+    }
+    return planned;
+  }
+
   async function clickOptionForCurrentQuestion(qNum, answerEntry) {
     const ans = answerEntry.answer;
     if (!ans) return false;
@@ -1853,28 +1896,9 @@
 
     // 2. Nếu là Đúng/Sai (TF)
     if (typeof ans === 'object' && ans !== null) {
-      // Ví dụ { a: "Đúng", b: "Sai", c: "Đúng", d: "Sai" }
-      const rows = getTrueFalseRows(currentRoot);
-      const rowsByKey = new Map(rows.map((row, index) => [
-        normalizeSubQuestionKey(row.querySelector('.option-char')?.innerText, index),
-        row
-      ]));
-      const entries = Object.entries(ans);
-      if (entries.length !== rows.length) throw new Error(`Câu ${qNum}: thiếu nội dung các ý Đúng/Sai.`);
-      const planned = [];
-      const used = new Set();
-      for (let index = 0; index < entries.length; index++) {
-        const [key, value] = entries[index];
-        const saved = answerEntry.statementContents?.[key] || answerEntry.choiceTexts?.[key];
-        const candidates = saved ? rows.filter(row => math.compare(saved, math.metadata(row.querySelector('.option-text .fadein') || row.querySelector('.option-text'))).status === 'equal') : [rowsByKey.get(normalizeSubQuestionKey(key, index))];
-        if (candidates.length !== 1 || !candidates[0] || used.has(candidates[0])) throw new Error(`Câu ${qNum}, ý ${key}: không khớp duy nhất công thức Đúng/Sai.`);
-        const expected = truthValue(value);
-        const radio = [...candidates[0].querySelectorAll('input[type="radio"]')].find(input => truthValue(input.value) === expected);
-        if (expected === null || !radio) throw new Error(`Câu ${qNum}, ý ${key}: thiếu lựa chọn Đúng/Sai.`);
-        used.add(candidates[0]); planned.push(radio);
-      }
+      const planned = trueFalseAnswerPlan(currentRoot, answerEntry, qNum);
       for (const radio of planned) if (!radio.checked) { assertValidatedQuestion(qNum); radio.click(); }
-      return planned.length === rows.length;
+      return true;
 
     }
 
@@ -1953,12 +1977,7 @@
 
         const currentRoot = getCurrentQuestionRoot();
         assertValidatedQuestion(i);
-        const isShort = String(answerEntry.type || '').toUpperCase() === 'SHORT' || !!shortAnswerInput(currentRoot);
-        const alreadyRecorded = typeof answerEntry.answer === 'string'
-          && (isShort
-            ? shortAnswerMatches(currentRoot, answerEntry)
-            : recordedMcqAnswerMatches(currentRoot, answerEntry))
-          && !findAnswerButton();
+        const alreadyRecorded = recordedAnswerMatches(currentRoot, answerEntry) && !findAnswerButton(true) && !findSkipButton(true);
         if (alreadyRecorded) {
           if (i < total) {
             const nextButton = findSidebarButtonForQuestion(i + 1);
@@ -1981,21 +2000,23 @@
           throw new Error(`Không chọn được đáp án cho câu ${i} (${selectionDebugSummary(getCurrentQuestionRoot(), answerEntry)}).`);
         }
 
-        const answerButtonReady = await waitForCondition(() => !!findAnswerButton(), 4000, 80);
+        const answerButtonReady = await waitForCondition(() => !!findCompletionButton(answerEntry), 4000, 80);
         if (!answerButtonReady) {
           if (!window.__BOT_RUNNING__) {
             stopped = true;
             break;
           }
-          throw new Error(`Đã chọn đáp án câu ${i} nhưng nút "Trả lời" chưa sẵn sàng.`);
+          throw new Error(`Đã chọn đáp án câu ${i} nhưng nút "Trả lời" hoặc "Bỏ qua" với đáp án khớp chưa sẵn sàng.`);
         }
 
-        const answerButton = findAnswerButton();
-        if (!answerButton) throw new Error(`Không còn tìm thấy nút "Trả lời" của câu ${i}.`);
+        const answerButton = findCompletionButton(answerEntry);
+        if (!answerButton) throw new Error(`Không còn tìm thấy nút hoàn thành câu ${i}.`);
+        const skippedRecordedAnswer = /^bỏ qua$/i.test(cleanText(answerButton.innerText));
+        const completionLabel = skippedRecordedAnswer ? 'Bỏ qua' : 'Trả lời';
         const identityBeforeSubmit = currentQuestionIdentity();
         assertValidatedQuestion(i);
         answerButton.click();
-        console.log(`✅ [OnluyenBot] Đã bấm Trả lời câu ${i}; đang chờ trang xác nhận...`);
+        console.log(`✅ [OnluyenBot] Đã bấm ${completionLabel} câu ${i}; đang chờ trang xác nhận...`);
 
         let confirmed = false;
         if (isPracticePage) {
@@ -2019,7 +2040,9 @@
                 const currentIdentity = currentQuestionIdentity();
                 return !!currentIdentity && currentIdentity !== identityBeforeSubmit && currentQuestionMatches(i + 1);
               })
-            : await waitForCondition(isFinalAnswerRecorded);
+            : await waitForCondition(() => isFinalAnswerRecorded() || (skippedRecordedAnswer
+              && currentQuestionIdentity() === identityBeforeSubmit && !findAnswerButton(true)
+              && recordedAnswerMatches(getCurrentQuestionRoot(), answerEntry)));
         }
         if (!confirmed) {
           if (!window.__BOT_RUNNING__) {
@@ -2028,10 +2051,10 @@
           }
           const actual = currentQuestionNumber();
           throw new Error(isPracticePage
-            ? `Đã bấm Trả lời câu luyện tập nhưng trang chưa tải câu tiếp theo.`
+            ? `Đã bấm ${completionLabel} câu luyện tập nhưng trang chưa tải câu tiếp theo.`
             : i < total
-            ? `Đã bấm Trả lời câu ${i} nhưng trang vẫn ở câu ${actual || 'không xác định'}, chưa sang câu ${i + 1}.`
-            : `Đã bấm Trả lời câu cuối nhưng trang chưa xác nhận lưu đáp án.`);
+            ? `Đã bấm ${completionLabel} câu ${i} nhưng trang vẫn ở câu ${actual || 'không xác định'}, chưa sang câu ${i + 1}.`
+            : `Đã bấm ${completionLabel} câu cuối nhưng trang chưa xác nhận lưu đáp án.`);
         }
 
         completed++;

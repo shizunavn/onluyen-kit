@@ -23,6 +23,8 @@ Trước khi tự điền, tiện ích đọc và kiểm tra toàn bộ đề. N
 
 Trong cùng tab và bài làm, tạo prompt, nạp database và tự điền dùng chung bản đề đã đọc. Bấm **Bắt đầu Tự Điền** có thể nạp luôn JSON trong ô; không cần nạp riêng trước. JSON đã xác minh không bị kiểm tra toàn đề lần nữa. Chuyển bài, thay nguồn API, số câu hoặc nội dung đang hiển thị làm mất hiệu lực bản lưu. Trước mỗi lần chọn/lưu đáp án, bot vẫn kiểm tra câu trên giao diện.
 
+Nếu đáp án đang chọn/điền khớp database nhưng nút vẫn là **Bỏ qua**, bot bấm nút đó để chuyển tiếp. Đúng/Sai phải khớp đủ tất cả các ý; ô trống hoặc nhiều lựa chọn đang chọn cùng lúc sẽ không được coi là hoàn thành.
+
 **Kiểm tra toàn bộ đề** đọc lại đề và kiểm tra JSON trong ô mà không thay database; dùng nút này khi muốn kiểm tra lại cả những câu chưa mở sau khi đề thay đổi. **Xuất báo cáo lỗi** tải báo cáo JSON cục bộ, gồm số câu, ID, nguồn công thức và phần không khớp. Bạn có thể gửi file này cùng cách tái hiện qua Feedback; tiện ích không tự gửi báo cáo.
 
 Prompt mới có `snapshot_id`. Chép đúng trường này vào đáp án nếu chỉ dùng chữ cái, khóa a/b/c/d hoặc câu không có ID. Token chỉ có hiệu lực với snapshot của lần tạo prompt đó; database cũ chỉ có vị trí mà không có căn cứ ánh xạ sẽ bị từ chối. Khi lựa chọn đã được xác minh, tiện ích lưu nội dung và nguồn công thức để đối chiếu lại sau khi xáo trộn.

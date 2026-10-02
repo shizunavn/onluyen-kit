@@ -42,6 +42,30 @@ cases.different.push(['Ngày 18/12/2021.', 'Ngày 18/12/2022.']);
 cases.unsupported.push('18/12/2021', 'Ngày $18/12/2021$.', 'Ngày 18/12/2021, tỉ lệ 1/2/3.', 'Tỉ số 18/12/2021.', 'Ngày 29/02/2021.');
 assert.equal(math.canonicalize(dateQuestionHtml).status, 'ok', 'User-provided vaccination HTML must remain readable');
 assert.ok(math.readContent(dateQuestionHtml).segments.some(s => s.format === 'text' && s.raw.includes('18/12/2021')), 'Retain date text and slashes instead of inventing fraction structure');
+const setQuestionHtml = fs.readFileSync(path.join(__dirname, 'fixtures/set-one-sided-fences-question.html'), 'utf8');
+const setFormulas = [...setQuestionHtml.matchAll(/<mjx-assistive-mml[^>]*>([\s\S]*?)<\/mjx-assistive-mml>/g)].map(m => m[1]);
+assert.equal(setFormulas.length, 5);
+const setOptions = setFormulas.slice(1);
+const setLatex = [
+  '$\\left[\\begin{array}{ll}&x\\notin A\\\\&x\\in B\\end{array}\\right.$',
+  '$\\left\\{\\begin{array}{ll}&x\\in A\\\\&x\\notin B\\end{array}\\right.$',
+  '$\\left\\{\\begin{array}{ll}&x\\in A\\\\&x\\in B\\end{array}\\right.$',
+  '$\\left[\\begin{array}{ll}&x\\in A\\\\&x\\in B\\end{array}\\right.$'
+];
+for (let i = 0; i < setOptions.length; i++) {
+  cases.equal.push([setOptions[i], setLatex[i]], [setOptions[i], math.text(setOptions[i])]);
+  // Presentation wrappers and MathML's explicit empty delimiter must agree.
+  const table = setOptions[i].match(/<mtable[\s\S]*?<\/mtable>/)[0];
+  const open = i === 0 || i === 3 ? '[' : '{';
+  cases.equal.push([setOptions[i], `<math><mfenced open="${open}" close=""><mstyle>${table}</mstyle></mfenced></math>`]);
+  for (let j = i + 1; j < setOptions.length; j++) cases.different.push([setOptions[i], setOptions[j]]);
+}
+const setTable = setOptions[3].match(/<mtable[\s\S]*?<\/mtable>/)[0];
+cases.different.push([setOptions[3], `<math><mo>[</mo>${setTable}<mo>]</mo></math>`]);
+cases.different.push([setOptions[3], setOptions[3].replace(/<mtd><\/mtd>/g, '')]);
+cases.incomplete.push(`<math><mo>[</mo>${setTable}</math>`, `$\\left[\\begin{matrix}x=1\\end{matrix}$`, setOptions[3].replace('<mi>x</mi>', '<mo>(</mo><mi>x</mi>'));
+cases.unsupported.push('$\\left[\\begin{matrix}(x+1\\end{matrix}\\right.$');
+assert.equal(math.canonicalize(setQuestionHtml).status, 'ok', 'Read the real question including SVG and assistive MathML');
 // Renderer transformations should preserve a whole mixed sentence, not merely
 // a formula tested in isolation. These cases also run unchanged in the browser.
 for (let n = 1; n <= 12; n++) {

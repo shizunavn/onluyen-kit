@@ -39,6 +39,12 @@
     const flat = items.flatMap(item => item?.t === 'row' ? item.items : item ? [item] : []);
     return flat.length === 1 ? flat[0] : { t: 'row', items: flat };
   }
+  function fenced(open, body, close) {
+    if ([open, close].some(value => value && !['(', ')', '[', ']', '{', '}', '|', '‖', '⟨', '⟩'].includes(value))) fail('Ký hiệu ngoặc chưa hỗ trợ');
+    if (open && close) return row([symbol(open), body, symbol(close)]);
+    if (!open && !close) return body;
+    return { t: 'fenced', open: open || null, body, close: close || null };
+  }
   const children = node => node.t === 'row' ? node.items : [node];
   const entities = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', emsp: ' ', ensp: ' ', thinsp: ' ', lsquo: '‘', rsquo: '’', ldquo: '“', rdquo: '”', ndash: '–', mdash: '—', hellip: '…', le: '≤', leq: '≤', ge: '≥', geq: '≥', ne: '≠', minus: '−', plusmn: '±', times: '×', divide: '÷', cup: '∪', cap: '∩', infin: '∞', isin: '∈', notin: '∉', radic: '√' };
   const decode = s => String(s).replace(/&(#x[\da-f]+|#\d+|[A-Za-z]+);/gi, (all, code) => {
@@ -170,8 +176,23 @@
         const name = token.v;
         if (aliases[name]) return symbol(aliases[name]);
         if (functions.has(name)) return { t: 'function', v: name };
-        if (['left', 'right', 'middle', 'big', 'Big', 'bigl', 'bigr', 'Bigl', 'Bigr', 'limits', 'nolimits'].includes(name)) {
-          if (['left', 'right'].includes(name) && peek()?.v === '.') { pos++; return null; }
+        if (name === 'left') {
+          const delimiter = () => {
+            const token = tokens[pos++];
+            if (!token) incomplete('Thiếu ký hiệu ngoặc của left/right');
+            const value = token.k === 'cmd' ? aliases[token.v] || token.v : token.v;
+            if (value === '.') return null;
+            if (!['(', ')', '[', ']', '{', '}', '|', '‖', '⟨', '⟩'].includes(value)) fail(`Ký hiệu ngoặc chưa hỗ trợ: ${value}`);
+            return value;
+          };
+          const open = delimiter();
+          const body = sequence(() => peek()?.k === 'cmd' && peek()?.v === 'right');
+          if (!peek()) incomplete('Thiếu right của ngoặc LaTeX');
+          pos++;
+          return fenced(open, body, delimiter());
+        }
+        if (name === 'right') incomplete('Ngoặc right không có left');
+        if (['middle', 'big', 'Big', 'bigl', 'bigr', 'Bigl', 'Bigr', 'limits', 'nolimits'].includes(name)) {
           return null;
         }
         if (['quad', 'qquad', 'space', ',', ';', '!', ':', ' '].includes(name)) return null;
@@ -216,7 +237,7 @@
           if (cells.length) flush();
           const table = { t: 'table', rows };
           const brackets = { pmatrix: ['(', ')'], bmatrix: ['[', ']'], vmatrix: ['|', '|'], Vmatrix: ['‖', '‖'], cases: ['{', null] }[env];
-          return brackets ? row([symbol(brackets[0]), table, brackets[1] && symbol(brackets[1])]) : table;
+          return brackets ? fenced(brackets[0], table, brackets[1]) : table;
         }
         fail(`Lệnh LaTeX chưa hỗ trợ: \\${name}`);
       } finally { depth--; }
@@ -293,7 +314,22 @@
       case 'math': case 'mrow': case 'mstyle': case 'mpadded': {
         const visibleKids = kids.filter((kid, i) => !(kid.name === 'mo' && xmlText(kid).trim() === '\u2061'
           && i > 0 && kids[i - 1].name === 'mi' && functions.has(xmlText(kids[i - 1]).trim())));
-        const body = row(visibleKids.map(parseMathML));
+        const fenceRole = (kid, role) => kid?.name === 'mo'
+          && (kid.attrs['data-mjx-texclass'] === role || kid.attrs.fence === 'true');
+        const first = visibleKids[0], last = visibleKids.at(-1);
+        let body;
+        if (visibleKids.length >= 3 && fenceRole(first, 'OPEN') && fenceRole(last, 'CLOSE')
+            && (!xmlText(first).trim() || !xmlText(last).trim())) {
+          // MathJax keeps an explicit empty operator for an invisible delimiter.
+          // Preserve the visible side as structure, rather than ignoring it or
+          // accepting arbitrary missing brackets beside a table.
+          body = fenced(xmlText(first).trim(), row(visibleKids.slice(1, -1).map(parseMathML)), xmlText(last).trim());
+        } else {
+          body = row(visibleKids.map(parseMathML));
+          // Conventional MathML cases omit the closing operator altogether.
+          if (body.t === 'row' && body.items.length === 2 && body.items[0].t === 'symbol'
+              && body.items[0].v === '{' && body.items[1].t === 'table') body = fenced('{', body.items[1], null);
+        }
         const variant = node.attrs.mathvariant;
         if (!variant || ['normal', 'italic'].includes(variant)) return body;
         const style = { 'double-struck': 'mathbb', bold: 'mathbf', script: 'mathcal', 'sans-serif': 'mathsf' }[variant];
@@ -345,7 +381,7 @@
       case 'mfenced': {
         const separators = node.attrs.separators ?? ',';
         const body = kids.flatMap((kid, i) => i && separators ? [symbol(separators[Math.min(i - 1, separators.length - 1)]), parseMathML(kid)] : [parseMathML(kid)]);
-        return row([symbol(node.attrs.open ?? '('), ...body, symbol(node.attrs.close ?? ')')]);
+        return fenced(node.attrs.open ?? '(', row(body), node.attrs.close ?? ')');
       }
       case 'mtable': return { t: 'table', rows: kids.map(tr => {
         if (tr.name !== 'mtr') fail(`Hàng MathML chưa hỗ trợ: ${tr.name}`);
@@ -358,6 +394,10 @@
     if (!node) return '';
     if (node.t === 'symbol' || node.t === 'number' || node.t === 'function' || node.t === 'literal') return node.v;
     if (node.t === 'row') return node.items.map(render).join('');
+    if (node.t === 'fenced') {
+      const delimiter = value => value ? /[{}]/.test(value) ? `\\${value}` : value : '.';
+      return `\\left${delimiter(node.open)}${render(node.body)}\\right${delimiter(node.close)}`;
+    }
     if (node.t === 'fraction') return `\\frac{${render(node.numerator)}}{${render(node.denominator)}}`;
     if (node.t === 'script') {
       const sup = render(node.sup);
@@ -431,10 +471,11 @@
       splitPlain(s.slice(marker[0].length), segments, prose);
       return;
     }
-    const bare = s.replace(/[.]$/, '');
+    // The dot in \right. is the invisible delimiter, not sentence punctuation.
+    const bare = /\\right\s*\.$/.test(s) ? s : s.replace(/[.]$/, '');
     if (bare && looksMath(bare) && !(prose && /^[A-Za-z]{2,}$/.test(bare) && !/^[A-Z]{1,3}$/.test(bare))) {
       segments.push({ format: 'plain', raw: bare });
-      if (s.endsWith('.')) segments.push({ format: 'text', raw: '.' });
+      if (bare !== s) segments.push({ format: 'text', raw: '.' });
     } else {
       // Read compact formulas in prose separately from Vietnamese text. Never
       // turn a sentence containing a relation symbol into one large formula.
@@ -604,8 +645,7 @@
           if (stack.length) stack.at(-1).separator = true;
         } else validateFences(item);
       }
-      // A cases/system brace intentionally has no closing fence.
-      if (stack.length && !(stack.length === 1 && stack[0].open === '{' && node.items.at(-1)?.t === 'table')) incomplete('Ngoặc công thức chưa đóng');
+      if (stack.length) incomplete('Ngoặc công thức chưa đóng');
     } else {
       for (const key of ['base', 'sub', 'sup', 'numerator', 'denominator', 'body', 'degree']) if (node[key]) validateFences(node[key]);
       if (node.rows) node.rows.flat().forEach(validateFences);
