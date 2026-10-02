@@ -38,6 +38,8 @@ One-sided systems retain their visible delimiter and table structure. MathJax's 
 
 Canonical version 2 uses a token stream independent of text/math renderer boundaries. Standalone integers, single-letter variables and capital names of one to three letters (such as triangle `ABC`) compare across prose, LaTeX and MathML. Word whitespace and terminal sentence periods normalize; internal punctuation stays significant. Separate numeric atoms never concatenate. Commas in ambiguous prose are not guessed to be decimal points. Fractions, scripts, accents, roots and tables stay structural atoms; source metadata remains version 1.
 
+MathJax may include a final period inside a numeric MathML node, such as `<mn>27.</mn>`. The reader keeps it as a number followed by punctuation, applying the same terminal-period rule as prose and LaTeX. Decimal digits remain intact; periods inside scripts, fraction operands and table cells do not disappear. Malformed numeric nodes such as `27..` remain unsupported.
+
 Valid `day/month/year` dates following a prose date introducer (`ngày`, `date`, `dated`, `on`) remain text, including their slashes. This rule applies before inferring compact formulas from un-delimited prose. It does not apply to explicit LaTeX/MathML or bare slash expressions: `1/2/3` still reports ambiguous division. Date components remain significant when comparing contents.
 
 `compare` adds optional `code` and `diagnostic` fields with the first differing token. Whole-exam reports distinguish missing answers, incomplete exams, unavailable rendering, unsupported syntax, multiple matches, conflicting IDs, expired snapshots and changed page content. Source segments in a report are restricted to the relevant question/answer and capped at 8192 characters each.

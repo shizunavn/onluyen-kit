@@ -66,6 +66,22 @@ cases.different.push([setOptions[3], setOptions[3].replace(/<mtd><\/mtd>/g, '')]
 cases.incomplete.push(`<math><mo>[</mo>${setTable}</math>`, `$\\left[\\begin{matrix}x=1\\end{matrix}$`, setOptions[3].replace('<mi>x</mi>', '<mo>(</mo><mi>x</mi>'));
 cases.unsupported.push('$\\left[\\begin{matrix}(x+1\\end{matrix}\\right.$');
 assert.equal(math.canonicalize(setQuestionHtml).status, 'ok', 'Read the real question including SVG and assistive MathML');
+const terminalNumberHtml = fs.readFileSync(path.join(__dirname, 'fixtures/mathml-terminal-number-question.html'), 'utf8');
+const terminalNumbers = [...terminalNumberHtml.matchAll(/<mjx-assistive-mml[^>]*>([\s\S]*?)<\/mjx-assistive-mml>/g)].map(m => m[1]);
+assert.equal(terminalNumbers.length, 4);
+for (const [i, value] of ['27', '19', '20', '23'].entries()) {
+  cases.equal.push([terminalNumbers[i], value], [terminalNumbers[i], `$${value}.$`], [terminalNumbers[i], math.text(terminalNumbers[i])]);
+  for (let j = i + 1; j < terminalNumbers.length; j++) cases.different.push([terminalNumbers[i], terminalNumbers[j]]);
+}
+cases.equal.push(['<math><mn>27.5.</mn></math>', '$27.5$'], ['<math><mn>27,5.</mn></math>', '27,5'], ['<math><mn>27.</mn><mo>+</mo><mn>1</mn></math>', '$27.+1$']);
+cases.different.push(['<math><mn>27.5.</mn></math>', '27'], ['<math><mn>27.</mn><mo>+</mo><mn>1</mn></math>', '$27+1$']);
+cases.equal.push(['<math><msup><mi>x</mi><mn>27.</mn></msup></math>', '$x^{27.}$']);
+cases.different.push(['<math><msup><mi>x</mi><mn>27.</mn></msup></math>', '$x^{27}$']);
+cases.different.push(['<math><mfrac><mn>27.</mn><mn>2</mn></mfrac></math>', '$\\frac{27}{2}$']);
+cases.different.push(['<math><mtable><mtr><mtd><mn>27.</mn></mtd></mtr></mtable></math>', '$\\begin{matrix}27\\end{matrix}$']);
+cases.different.push(['<math><mn>2.</mn><mn>7</mn></math>', '27']);
+cases.unsupported.push('<math><mn>27..</mn></math>', '<math><mn>27,</mn></math>', '<math><mn>27.5.1</mn></math>');
+assert.equal(math.canonicalize(terminalNumberHtml).status, 'ok', 'User question #12758898 must remain readable');
 // Renderer transformations should preserve a whole mixed sentence, not merely
 // a formula tested in isolation. These cases also run unchanged in the browser.
 for (let n = 1; n <= 12; n++) {

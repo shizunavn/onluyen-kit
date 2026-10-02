@@ -349,9 +349,14 @@
         return body;
       }
       case 'mn': {
-        const value = xmlText(node).trim().replace(/^(\d+),(\d+)$/, '$1.$2');
-        if (!/^\d+(?:\.\d+)?$/.test(value)) fail(`Số MathML chưa hỗ trợ: ${value}`);
-        return { t: 'number', v: value };
+        const value = xmlText(node).trim();
+        const number = value.match(/^(\d+(?:[.,]\d+)?)(\.)?$/);
+        if (!number) fail(`Số MathML chưa hỗ trợ: ${value}`);
+        const atom = { t: 'number', v: number[1].replace(',', '.') };
+        // MathJax can put a sentence period inside mn (e.g. <mn>27.</mn>).
+        // Retain it as punctuation: only the whole-content terminal period
+        // normalizes away, never a dot inside scripts, fractions or tables.
+        return number[2] ? row([atom, symbol('.')]) : atom;
       }
       case 'mo': {
         const value = xmlText(node).trim();

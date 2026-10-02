@@ -153,6 +153,38 @@ function trueFalseRow(key, text, token) {
     assert.equal(await setPage.$$eval('input:checked', inputs => inputs.length), 0, 'Reading and matching a system never selects an answer');
     await setPage.close();
 
+    const terminalNumberHtml = fs.readFileSync(path.join(__dirname, 'fixtures/mathml-terminal-number-question.html'), 'utf8');
+    const terminalNumberPage = await mount(browser, `<div id="test-step-question"><div class="question-container">${terminalNumberHtml}</div></div>`);
+    const terminalNumberPrompt = await send(terminalNumberPage, { action: 'OL_GET_AI_PROMPT' });
+    assert.equal(terminalNumberPrompt.ok, true, terminalNumberPrompt.error);
+    assert.match(terminalNumberPrompt.prompt, /12758898/);
+    for (const value of ['27', '19', '20', '23']) assert.ok(terminalNumberPrompt.prompt.includes(value));
+    await terminalNumberPage.evaluate(() => {
+      window.__ONLUYEN_RAW_DATA__ = { questions: [{ dataStandard: {
+        numberQuestion: 12758898, stepIndex: 29, typeAnswer: 0,
+        languagesData: { vi: { content: document.querySelector('.question-name').innerHTML,
+          options: [...document.querySelectorAll('.question-option-content')].map(el => ({ content: el.innerHTML })) } }
+      } }] };
+    });
+    const terminalNumberApiPrompt = await send(terminalNumberPage, { action: 'OL_GET_AI_PROMPT' });
+    assert.equal(terminalNumberApiPrompt.ok, true, terminalNumberApiPrompt.error);
+    const numberEntry = { cau: 30, id: '12758898', loai: 'MCQ', dap_an: 'C', noi_dung_dap_an: '20' };
+    const terminalNumberImport = await send(terminalNumberPage, { action: 'OL_LOAD_DATABASE', json: [numberEntry] });
+    assert.equal(terminalNumberImport.ok, true, terminalNumberImport.error);
+    assert.equal(terminalNumberImport.answers[0].dap_an, 'C');
+    assert.equal(math.compare(JSON.parse(terminalNumberImport.json)[0].math_content.answer, '20').status, 'equal');
+    await terminalNumberPage.evaluate(() => {
+      window.__ONLUYEN_RAW_DATA__ = null;
+      const parent = document.querySelector('.options');
+      [...parent.children].reverse().forEach(el => parent.appendChild(el));
+      parent.querySelectorAll('.question-option-label').forEach((el, i) => { el.innerText = String.fromCharCode(65 + i); });
+    });
+    const reorderedNumberImport = await send(terminalNumberPage, { action: 'OL_LOAD_DATABASE', json: [numberEntry] });
+    assert.equal(reorderedNumberImport.ok, true, reorderedNumberImport.error);
+    assert.equal(reorderedNumberImport.answers[0].dap_an, 'B', 'Match the number after options reorder; never reuse the old letter');
+    assert.equal(await terminalNumberPage.$$eval('input:checked', inputs => inputs.length), 0);
+    await terminalNumberPage.close();
+
     const numberedQuestion = require('./math-cases').numberedQuestion;
     const numberedPage = await mount(browser, `
       <div id="test-step-question"><div class="question-container">
