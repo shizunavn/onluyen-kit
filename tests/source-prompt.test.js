@@ -69,6 +69,7 @@ const corpus = [content, unknown, other, `$${latex}$`,
   '<math><mfrac><mn>1</mn><mfrac><mi>x</mi><mi>y</mi></mfrac></mfrac></math>',
   '<math><mrow><mn>1</mn><mn>2</mn></mrow></math>',
   '<mjx-container><svg><text>x</text></svg></mjx-container>', antennaLarge, multipleMedia, sourceWithMedia];
+corpus.push(`Texte ${unknown}`, `<div>\nTexte&nbsp;${unknown}\n</div>`);
 const results = corpus.map(value => ({ prompt: math.toPromptContent(value), fingerprint: math.sourceFingerprint(value) }));
 const formatted = results[0].prompt;
 assert.equal(formatted.ok, true);
@@ -81,6 +82,10 @@ assert.doesNotMatch(formatted.text, /<div|<svg|chưa hỗ trợ/i);
 assert.ok(formatted.diagnostics.length >= 2);
 assert.equal(math.compare(unknown, unknown).status, 'unsupported');
 assert.notEqual(math.sourceFingerprint(unknown), math.sourceFingerprint(other));
+assert.equal(math.sourceFingerprint(`Texte ${unknown}`),math.sourceFingerprint(`<div>\nTexte&nbsp;${unknown}\n</div>`),
+  'Unsupported math keeps its raw source while surrounding prose ignores renderer whitespace');
+assert.notEqual(math.sourceFingerprint(`Texte ${unknown}`),math.sourceFingerprint(`Texte. ${unknown}`), 'Interior punctuation stays significant');
+assert.notEqual(math.sourceFingerprint(`Texte ${unknown}`),math.sourceFingerprint(`<div>Texte ${other}</div>`));
 assert.deepEqual(math.toPromptContent(JSON.parse(JSON.stringify(math.metadata(content)))), formatted);
 assert.equal(results[6].prompt.ok, false, 'Unrendered SVG is not a source');
 assert.ok(!results[5].prompt.text.includes('12'), 'Separate number nodes never become 12');
@@ -159,6 +164,16 @@ const send = (page, payload) => page.evaluate(p => new Promise(resolve => __CLI_
   const browser = await puppeteer.launch({ executablePath, headless: true });
   try {
     const page = await mount(browser);
+    await page.evaluate(unknown=>{
+      document.querySelectorAll('.answer-sheet button')[1].addEventListener('click',()=>setTimeout(()=>{
+        window.postMessage({type:'ONLUYEN_RAW_TEST_DATA',payload:{questions:[1,2].map(n=>({dataStandard:{
+          numberQuestion:1000+n,stepIndex:n-1,typeAnswer:0,languagesData:{vi:{
+            content:`Tư liệu &amp; ghi chú<br>Đề câu ${n} ${unknown}`,
+            options:__sources[n-1].map((content,i)=>({idOption:i?'b':'a',content}))
+          }}
+        }}))}},'*');
+      },70));
+    },unknown);
     const prepared = await cli.prepareExam(page);
     assert.deepEqual(await page.evaluate(values => values.map(value => ({prompt: OnluyenMath.toPromptContent(value),fingerprint: OnluyenMath.sourceFingerprint(value)})), corpus), results);
     assert.equal(prepared.ok, true, prepared.error);

@@ -527,13 +527,69 @@
 
   function examSourceContext() {
     const questions = parseQuestionsFromRawAPI() || [];
+    const sourceKey = value => math.toPromptContent(value).ok ? math.sourceFingerprint(value) : null;
+    const images = values => [...new Set((values || []).map(i => i.src))];
     return JSON.stringify({ revision: examRevision, key: examStorageKey(),
       sidebar: sidebarQuestionNumbers(), total: window.__ONLUYEN_RAW_DATA__?.questions?.length || 0,
-      api: questions.map(q => ({ number: q.number, id: q.sourceId, type: q.answerType,
-        prompt: q.math_content?.question || q.prompt, expectedChoiceCount: q.expectedChoiceCount,
-        images: (q.images || []).map(i => i.src),
-        choices: q.choices.map(c => ({ label: c.label, id: c.idOption,
-          content: c.math_content || c.text, images: (c.images || []).map(i => i.src) })) })) });
+      api: questions.map(q => ({ number: q.number, id: q.sourceId, type: q.raw?.typeAnswer != null ? q.answerType : null,
+        prompt: sourceKey(q.math_content?.question || q.prompt), expectedChoiceCount: q.expectedChoiceCount,
+        images: images(q.images),
+        choices: q.choices.map(c => ({ label: c.label, id: c.idOption == null ? null : String(c.idOption),
+          content: sourceKey(c.math_content || c.text), images: images(c.images) })) })) });
+  }
+
+  // API delivery may add previously missing sources during navigation. Adopt
+  // it only when every known assertion still agrees with the collected exam.
+  // Renderer wrappers/provenance never determine whether content changed.
+  function reconcileSourceContext(previous, next, questions) {
+    if (previous === next) return null;
+    const before = JSON.parse(previous), after = JSON.parse(next);
+    const problem = (number, reason, code = 'PAGE_CHANGED') => ({ number, reason, code });
+    if (before.revision !== after.revision || before.key !== after.key) return problem(null, 'Đã chuyển bài.');
+    if (after.total > questions.length || after.sidebar.some(number => !questions.some(q => q.number === number))) {
+      return problem(null, 'Phiếu trả lời/API có thêm câu chưa được đọc.', 'SCRAPE_INCOMPLETE');
+    }
+    if (before.sidebar.some(number => !after.sidebar.includes(number))) return problem(null, 'Phiếu trả lời chưa tải đủ hoặc đã đổi số câu.', 'NOT_RENDERED');
+    if (before.total !== after.total && !after.api.length) return problem(null, 'API vừa cập nhật nhưng chưa có nguồn để xác minh.', 'SCRAPE_INCOMPLETE');
+    const imagesAgree = (known, current) => {
+      let offset = -1;
+      return known.every(src => (offset = current.indexOf(src, offset + 1)) >= 0);
+    };
+    for (const old of before.api) {
+      const current = after.api.find(q => q.number === old.number);
+      if (!current) return problem(old.number, 'Câu đã bị gỡ hoặc đổi thứ tự trong API.');
+      for (const field of ['id', 'type', 'prompt']) {
+        if (old[field] != null && old[field] !== current[field]) return problem(old.number, `API đã đổi ${field === 'id' ? 'ID câu' : field === 'type' ? 'loại câu' : 'nội dung đề'}.`);
+      }
+      if (!imagesAgree(old.images, current.images)) return problem(old.number, 'API đã đổi ảnh của câu.');
+      for (const choice of old.choices) {
+        const latest = current.choices.find(c => c.label === choice.label);
+        if (!latest || choice.id != null && choice.id !== latest.id || choice.content != null && choice.content !== latest.content
+            || !imagesAgree(choice.images, latest.images)) return problem(old.number, `API đã đổi lựa chọn ${choice.label}.`);
+      }
+    }
+    for (const incoming of after.api) {
+      const current = questions.find(q => q.number === incoming.number);
+      if (!current) return problem(incoming.number, 'API có câu chưa được đọc.', 'SCRAPE_INCOMPLETE');
+      if (incoming.id && current.sourceId && incoming.id !== current.sourceId) return problem(incoming.number, 'ID API khác ID trên giao diện.');
+      if (incoming.type && incoming.type !== current.answerType) return problem(incoming.number, 'Loại câu API khác giao diện.');
+      if (incoming.prompt && incoming.prompt !== math.sourceFingerprint(current.math_content?.question || current.prompt)) {
+        return problem(incoming.number, 'Nội dung đề API khác nguồn đã đọc.');
+      }
+      // API and DOM collectors aggregate question/choice images differently;
+      // ordered image assertions are checked within each choice below.
+      if (!incoming.images.every(src => (current.images || []).some(i => i.src === src))) return problem(incoming.number, 'Ảnh API khác nguồn đã đọc.');
+      if (incoming.expectedChoiceCount > current.choices.length) return problem(incoming.number, 'Chưa đọc đủ lựa chọn API vừa bổ sung.', 'SCRAPE_INCOMPLETE');
+      for (const choice of incoming.choices) {
+        const actual = current.choices.find(c => c.label === choice.label);
+        if (!actual || choice.id != null && actual.idOption != null && choice.id !== String(actual.idOption)
+            || choice.content && choice.content !== math.sourceFingerprint(actual.math_content || actual.text)
+            || !imagesAgree(choice.images, (actual.images || []).map(i => i.src))) {
+          return problem(incoming.number, `Lựa chọn ${choice.label} của API khác nguồn đã đọc.`);
+        }
+      }
+    }
+    return null;
   }
 
   function sameRenderedQuestion(expected, current) {
@@ -552,8 +608,13 @@
   function refreshExamSnapshot(checkRendered = true) {
     if (!examSnapshot) return;
     const current = checkRendered ? extractStructuredTestQuestions() : [];
-    if (examSnapshotContext !== examSourceContext() || current.some(q =>
+    const nextContext = examSourceContext();
+    if (reconcileSourceContext(examSnapshotContext, nextContext, examSnapshot) || current.some(q =>
       !sameRenderedQuestion(examSnapshot.find(e => e.number === q.number), q))) invalidateExamSnapshot();
+    else if (examSnapshotContext !== nextContext) {
+      if (databaseValidation?.sourceContext === examSnapshotContext) databaseValidation.sourceContext = nextContext;
+      examSnapshotContext = nextContext;
+    }
   }
 
   async function getCompleteExamQuestions() {
@@ -628,16 +689,30 @@
         }
         checkContext();
         if (collected.length < expected) throw new Error('Chưa đọc đủ số câu của đề. Hãy chờ phiếu trả lời tải xong rồi thử lại.');
-        if (sourceContext !== examSourceContext()) throw new Error('Nguồn đề đã thay đổi trong khi đọc. Hãy kiểm tra lại.');
-        examSnapshot = collected;
-        examSnapshotContext = sourceContext;
-        return collected;
       } finally {
         if (revision === examRevision && key === examStorageKey() && originalNumber && currentQuestionNumber() !== originalNumber) {
           findSidebarButtonForQuestion(originalNumber)?.click();
-          await waitRead(() => currentQuestionNumber() === originalNumber, 3000);
+          const restored = await waitRead(() => currentQuestionNumber() === originalNumber
+            && completeDomQuestion(extractStructuredTestQuestions().find(q => q.number === originalNumber)), 3000);
+          if (!restored && !collectionCancelled && revision === examRevision && key === examStorageKey()) {
+            throw Object.assign(new Error(`Câu ${originalNumber}: chưa render đầy đủ khi trở về câu ban đầu.`), { code: 'NOT_RENDERED' });
+          }
         }
       }
+      checkContext();
+      const finalContext = examSourceContext();
+      const conflict = reconcileSourceContext(sourceContext, finalContext, collected);
+      if (conflict) {
+        lastMatchReport = math.matchReport({ ok: false, count: collected.length, issues: [{
+          number: conflict.number, id: collected.find(q => q.number === conflict.number)?.sourceId || null,
+          status: conflict.code === 'PAGE_CHANGED' ? 'different' : 'incomplete', code: conflict.code,
+          phase: 'scrape', reason: `${conflict.reason} Hãy kiểm tra lại.`, source: []
+        }] });
+        throw Object.assign(matchFailure(lastMatchReport), { code: conflict.code });
+      }
+      examSnapshot = collected;
+      examSnapshotContext = finalContext;
+      return collected;
     })();
     try { return await examCollection; } finally { examCollection = null; }
   }
@@ -1489,7 +1564,6 @@
           answers: window.__ONLUYEN_DATABASE_EXPORT__, json: databaseExportJson(), reused: true };
       }
       const questions = await getCompleteExamQuestions();
-      const sourceContext = examSnapshotContext;
       if (validationCancelled || revision !== examRevision || key !== examStorageKey()) throw new Error('Đã hủy kiểm tra hoặc chuyển bài; database trước đó được giữ nguyên.');
       const activeSnapshot = promptSnapshot && promptSnapshot.revision === revision && promptSnapshot.key === key ? promptSnapshot : null;
       const validation = math.validateExam(questions, items, { expectedTotal: expectedExamTotal(questions), snapshotId: activeSnapshot?.id, snapshotSignature: activeSnapshot?.signature });
@@ -1503,11 +1577,12 @@
         try {
           await persistExamDatabase(key);
           if (validationCancelled || revision !== examRevision || key !== examStorageKey()) throw new Error('Đã hủy kiểm tra hoặc chuyển bài trong khi lưu.');
-          if (sourceContext !== examSourceContext()) throw Object.assign(new Error('Nguồn đề đã thay đổi trong khi lưu. Hãy kiểm tra lại.'), { code: 'PAGE_CHANGED' });
+          refreshExamSnapshot(false);
+          if (examSnapshot !== questions) throw Object.assign(new Error('Nguồn đề thực sự đã thay đổi trong khi lưu. Hãy kiểm tra lại.'), { code: 'PAGE_CHANGED' });
           stagedDatabaseInput = null;
           databaseValidation = { revision, key, signature: math.signature(questions), questions,
             mappings: validation.mappings,
-            sourceContext, inputKey,
+            sourceContext: examSnapshotContext, inputKey,
             exportKey: JSON.stringify(databaseItems(databaseExportJson())), report: lastMatchReport };
         } catch (error) {
           if (revision === examRevision && key === activeExamKey) {

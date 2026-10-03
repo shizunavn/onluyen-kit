@@ -90,12 +90,97 @@ async function mount(browser, mode = {}) {
   return page;
 }
 const send = (page, payload) => page.evaluate(p => new Promise(resolve => __listener(p, {}, resolve)), payload);
+async function installApiDelivery(page) {
+  await page.evaluate(first => {
+    window.__apiSequence = 0;
+    window.__makeApi = (options = {}) => ({ questions: [1, 2].slice(0, options.partial ? 1 : 2).map(n => ({dataStandard:{
+      numberQuestion:n===1?12905165:9999,stepIndex:n-1,typeAnswer:0,
+      // Delivery metadata grows to pass the existing raw-payload completeness
+      // heuristic. It has no bearing on the semantic source context.
+      delivery:'x'.repeat(++__apiSequence*1000),
+      languagesData:{vi:{content:options.renderer?`<p><span>Đề&nbsp;câu ${n}.</span></p>`:`Đề câu ${n}.`,
+        options:__texts[n-1].map((text,i)=>({
+          ...(options.ids?{idOption:`${n}-${i}`} : {}),
+          content:options.conflict&&n===1&&!i?'Nội dung API đã đổi.':options.renderer&&n===1&&!i?first:text
+        }))}}
+    }})) });
+    window.__deliverApi = options => window.postMessage({type:'ONLUYEN_RAW_TEST_DATA',payload:__makeApi(options)},'*');
+  }, answerText);
+}
 (async () => {
   const executablePath = ['C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'].find(f => fs.existsSync(f));
   const browser = await puppeteer.launch({ executablePath, headless: true });
   try {
     const page = await mount(browser);
     const answers = [entry, { cau: 2, id: '9999', loai: 'MCQ', dap_an: 'A', noi_dung_dap_an: 'Đáp án cuối.' }];
+    for (const timing of ['reading', 'restoring']) {
+      const delivery = await mount(browser);
+      await installApiDelivery(delivery);
+      await delivery.evaluate(timing => {
+        __deliverApi({partial:true});
+        document.querySelectorAll('.answer-sheet button')[timing==='reading'?1:0].addEventListener('click',()=>{
+          setTimeout(()=>__deliverApi({renderer:true}),70);
+        });
+      }, timing);
+      await delivery.waitForFunction(()=>__ONLUYEN_RAW_DATA__?.questions.length===1);
+      const result = await send(delivery,{action:'OL_LOAD_DATABASE',json:answers});
+      assert.equal(result.ok,true,`${timing}: ${result.error}`);
+      assert.deepEqual(await delivery.evaluate(()=>[__navigation,__clicks,__submits]),[2,0,0], 'Compatible late API sources require no second scan or answer clicks');
+      const promptBefore = await send(delivery,{action:'OL_GET_AI_PROMPT'});
+      const token = promptBefore.prompt.match(/snapshot_id: ([a-f0-9]+)/)[1];
+      await delivery.evaluate(()=>__deliverApi({renderer:true,ids:true}));
+      await delivery.waitForFunction(()=>__ONLUYEN_RAW_DATA__?.questions[0].dataStandard.languagesData.vi.options[0].idOption==='1-0');
+      const promptAfter = await send(delivery,{action:'OL_GET_AI_PROMPT'});
+      assert.ok(promptAfter.prompt.includes(token),'Verified metadata enrichment retains the existing prompt snapshot');
+      const cosmeticReuse = await send(delivery,{action:'OL_LOAD_DATABASE',json:result.json});
+      assert.equal(cosmeticReuse.reused,true,'Renderer/ID enrichment retains the verified database');
+      const positional = await send(delivery,{action:'OL_LOAD_DATABASE',json:answers.map(a=>({cau:a.cau,id:a.id,loai:'MCQ',dap_an:'A',snapshot_id:token}))});
+      assert.equal(positional.ok,true,positional.error);
+      assert.deepEqual(await delivery.evaluate(()=>[__navigation,__clicks,__submits]),[2,0,0]);
+      await delivery.close();
+    }
+    const changedDuringRead = await mount(browser);
+    await installApiDelivery(changedDuringRead);
+    const priorDelivery = await send(changedDuringRead,{action:'OL_LOAD_DATABASE',json:answers});
+    assert.equal(priorDelivery.ok,true,priorDelivery.error);
+    await changedDuringRead.evaluate(()=>{
+      __deliverApi({partial:true});
+      document.querySelectorAll('.answer-sheet button')[1].addEventListener('click',()=>setTimeout(()=>__deliverApi({conflict:true}),70));
+    });
+    await changedDuringRead.waitForFunction(()=>__ONLUYEN_RAW_DATA__?.questions.length===1);
+    const actualReadConflict = await send(changedDuringRead,{action:'OL_VALIDATE_DATABASE',json:answers});
+    assert.equal(actualReadConflict.ok,false);
+    assert.match(actualReadConflict.error,/Câu 1 #12905165: API đã đổi lựa chọn A/);
+    assert.equal(actualReadConflict.report.issues[0].code,'PAGE_CHANGED');
+    assert.equal(actualReadConflict.report.issues[0].number,1);
+    assert.equal(actualReadConflict.report.issues[0].id,'12905165');
+    assert.deepEqual(await changedDuringRead.evaluate(()=>[__clicks,__submits]),[0,0]);
+    assert.equal((await send(changedDuringRead,{action:'OL_PING'})).databaseJson,priorDelivery.json);
+    assert.equal(await changedDuringRead.evaluate(()=>__store['onluyen_saved_db:preflight-fixture']),priorDelivery.json);
+    await changedDuringRead.close();
+    for (const conflict of [false,true]) {
+      const storing = await mount(browser);
+      await installApiDelivery(storing);
+      const before = await send(storing,{action:'OL_LOAD_DATABASE',json:answers});
+      assert.equal(before.ok,true,before.error);
+      await storing.evaluate(conflict=>{
+        const original=chrome.storage.local.set;
+        let once=true;
+        chrome.storage.local.set=async value=>{
+          original(value);
+          if(once){once=false;__deliverApi({renderer:true,conflict});await new Promise(resolve=>setTimeout(resolve,100));}
+        };
+      },conflict);
+      const duringWrite = await send(storing,{action:'OL_LOAD_DATABASE',json:answers.map(a=>({...a,note:'Force new validation'}))});
+      assert.equal(duringWrite.ok,!conflict,duringWrite.error);
+      if(conflict){
+        assert.equal(duringWrite.report.issues[0].code,'PAGE_CHANGED');
+        assert.equal((await send(storing,{action:'OL_PING'})).databaseJson,before.json);
+        assert.equal(await storing.evaluate(()=>__store['onluyen_saved_db:preflight-fixture']),before.json);
+      } else assert.equal((await send(storing,{action:'OL_LOAD_DATABASE',json:duringWrite.json})).reused,true);
+      assert.deepEqual(await storing.evaluate(()=>[__navigation,__clicks,__submits]),[2,0,0]);
+      await storing.close();
+    }
     const loaded = await send(page, { action: 'OL_LOAD_DATABASE', json: answers });
     assert.equal(loaded.ok, true, loaded.error);
     const firstScanNavigation = await page.evaluate(() => __navigation);

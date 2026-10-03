@@ -837,7 +837,9 @@
     if (canonical.status === 'ok') return JSON.stringify(['canonical', canonical.key]);
     const content = readContent(input);
     return JSON.stringify(['source', content.status, content.error?.status || '',
-      (content.segments || []).map(segment => [segment.format, String(segment.raw).replace(/\r\n?/g, '\n')]),
+      (content.segments || []).map(segment => [segment.format, segment.format === 'text'
+        ? String(segment.raw).replace(/\s+/g, ' ').trim()
+        : String(segment.raw).replace(/\r\n?/g, '\n')]).filter(([format, raw]) => format !== 'text' || raw),
       content.status !== 'ok' || content.error ? content.source || '' : '']);
   }
   function exactSourceMatch(left, right) {
