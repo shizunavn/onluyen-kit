@@ -6,14 +6,21 @@
 
 - `readContent(string | Element | metadata)` reads text/math segments and reports `ok`, `unsupported`, or `incomplete`.
 - `canonicalize(input)` returns a typed canonical representation, key and source content, or a diagnostic. The key is transient; save the source instead.
-- `compare(left, right)` returns `equal`, `different`, `unsupported`, or `incomplete`, with a reason. It accepts sources, metadata and canonical representations. Only `equal` authorizes matching.
+- `compare(left, right)` returns `equal`, `different`, `unsupported`, or `incomplete`, with a reason. It accepts sources, metadata and canonical representations. Only `equal` establishes structural equivalence; snapshot identity is separate evidence.
+- `toPromptContent(input)` returns `ok`, `text`, source `segments` and parsing `diagnostics`. Original LaTeX is preferred. Supported MathML is converted only if its LaTeX round trip preserves structure; otherwise the original MathML is emitted in a marked block. Parse failures are warnings, extraction failures block export. No surrounding HTML, SVG text or error messages are substituted for a formula.
+- `inspectPromptSources(questions)` checks completeness and collects provenance/format/phase diagnostics without requiring every formula to parse. `splitPrompt(prompt, limit)` splits at question boundaries with the same header/snapshot and never truncates a question.
 - `metadata(input, origin = 'source')` returns serializable source segments. Use `origin: 'inferred'` when rebuilding metadata from legacy answer text rather than actual question sources.
 - `text(input)` provides a readable representation. Structural MathML is rendered with explicit LaTeX grouping instead of flattened text.
 - `resolveChoice(choices, savedSource, optionId)` requires a unique match, rejects ambiguous/unsupported candidates and checks option-ID conflicts.
+- `verifyChoice(choices, savedSource, optionId, images, context)` additionally verifies current snapshot labels and exact original source. The returned `verification.basis` is `structured`, `snapshot` or `blocked`; this does not change `compare()` results. Supplied content must agree with the selected identity. An unrelated unsupported candidate cannot veto a verified option ID.
 - `combine(...sources)` combines source segments without flattening formulas.
 - `signature(questions)` fingerprints the ordered question identities and contents. It is transient and must be recalculated from source.
-- `validateExam(questions, entries, options)` checks every question and answer without selecting or saving anything. It returns `ok`, all `issues`, and internal verified `mappings`. Options accept `expectedTotal`, `snapshotId` and the original `snapshotSignature` for positional replies.
+- `validateExam(questions, entries, options)` checks every question and answer without selecting or saving anything. It returns `ok`, all `issues`, parser `warnings`, and internal verified `mappings`. Options accept `expectedTotal`, `snapshotId` and the original `snapshotSignature` for positional replies. CLI subsets also pass the original `snapshotQuestions`; every subset question must belong to that unchanged snapshot.
 - `matchReport(validation, versions)` exports only the diagnostic allowlist, not answer-entry objects, browser state or credentials.
+
+Unsupported sources have distinct raw fingerprints instead of a shared null canonical key. A changed unknown command/element invalidates its snapshot. Original supplied answer text remains separate from the selected source; `math_content.supplied_answer` retains supplied source metadata when present. Verification describes mapping evidence, never the probability that an answer is mathematically correct.
+
+`OL_PREPARE_EXAM` provides the browser driver's complete collected questions and snapshot to the CLI. The CLI builds subset prompts with that same full-exam identity, validates the entire combined answer set before caching, and imports/starts against the existing driver. Repeated prompt exports retain the token while sources are unchanged. Source collection, parser warnings and answer conflicts remain separate phases in reports. Prompt parts have a 60000-character limit; a single oversized question is explicitly rejected instead of truncated.
 
 ## Saved data
 
@@ -34,7 +41,7 @@ Existing Vietnamese fields remain supported. Optional `math_content` on a databa
 
 The reader supports common operators, relations, fractions, roots, scripts, sets, intervals, functions, accents/vectors, sums/integrals, matrices and systems. Unsupported commands/elements remain diagnosable; missing MathJax source is incomplete. It is deliberately conservative about flattened legacy data, malformed syntax and ambiguous positional caches. Layout and rendering differences can normalize; case, operators, order, grouping and numeric structure remain significant.
 
-One-sided systems retain their visible delimiter and table structure. MathJax's explicit empty closing fence, `mfenced close=""`, and LaTeX `\left[...\right.` / `\left\{...\right.` agree. Square brackets and braces remain distinct, as do rows, columns and empty cells. The terminal dot in `\right.` is an invisible delimiter, not sentence punctuation. Missing `\right` or an unclosed ordinary bracket still fails validation.
+One-sided systems retain their visible delimiter and table structure. MathJax's explicit empty closing fence, `mfenced close=""`, and LaTeX `\left[...\right.` / `\left\{...\right.` agree. Square brackets and braces remain distinct, as do rows, columns and empty cells. The terminal dot in `\right.` is an invisible delimiter, not sentence punctuation. Missing `\right` or an unclosed ordinary bracket still fails structural comparison; prompt export retains its source and snapshot verification remains separate.
 
 Canonical version 2 uses a token stream independent of text/math renderer boundaries. Standalone integers, single-letter variables and capital names of one to three letters (such as triangle `ABC`) compare across prose, LaTeX and MathML. Word whitespace and terminal sentence periods normalize; internal punctuation stays significant. Separate numeric atoms never concatenate. Commas in ambiguous prose are not guessed to be decimal points. Fractions, scripts, accents, roots and tables stay structural atoms; source metadata remains version 1.
 

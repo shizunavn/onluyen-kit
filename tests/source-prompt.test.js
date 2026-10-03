@@ -1,0 +1,143 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const puppeteer = require('puppeteer');
+const math = require('../math-content');
+const cli = require('../cli/bulk-runner');
+
+// Deliberately outside the parser's grammar. These are sources, not flattened text.
+const unknown = '<math><menclose notation="circle"><mi>x</mi></menclose></math>';
+const other = '<math><menclose notation="circle"><mi>y</mi></menclose></math>';
+const latex = String.raw`\overbrace{x+y}`;
+const content = `<div>Tư liệu &amp; ghi chú<br>1) ${unknown}<br>2) $${latex}$<br>Phần kết.</div>`;
+const question = { number: 1, sourceId: 'source-1', answerType: 'MCQ', origin: 'dom',
+  prompt: content, choices: [{ label: 'A', idOption: 'a', text: unknown }, { label: 'B', idOption: 'b', text: 'x+1' }] };
+const snapshot = { id: 'source-token', signature: math.signature([question]), questions: [question] };
+const options = { snapshotId: snapshot.id, snapshotSignature: snapshot.signature };
+const entry = { cau: 1, id: 'source-1', loai: 'MCQ', dap_an: 'A', snapshot_id: snapshot.id };
+const corpus = [content, unknown, other, `$${latex}$`,
+  '<math><mfrac><mn>1</mn><mfrac><mi>x</mi><mi>y</mi></mfrac></mfrac></math>',
+  '<math><mrow><mn>1</mn><mn>2</mn></mrow></math>',
+  '<mjx-container><svg><text>x</text></svg></mjx-container>'];
+const results = corpus.map(value => ({ prompt: math.toPromptContent(value), fingerprint: math.sourceFingerprint(value) }));
+const formatted = results[0].prompt;
+assert.equal(formatted.ok, true);
+assert.match(formatted.text, /Tư liệu & ghi chú\n1\)/);
+assert.ok(formatted.text.includes(unknown));
+assert.ok(formatted.text.includes(latex));
+assert.ok(formatted.text.indexOf('1)') < formatted.text.indexOf('2)'));
+assert.match(formatted.text, /Phần kết/);
+assert.doesNotMatch(formatted.text, /<div|<svg|chưa hỗ trợ/i);
+assert.ok(formatted.diagnostics.length >= 2);
+assert.equal(math.compare(unknown, unknown).status, 'unsupported');
+assert.notEqual(math.sourceFingerprint(unknown), math.sourceFingerprint(other));
+assert.deepEqual(math.toPromptContent(JSON.parse(JSON.stringify(math.metadata(content)))), formatted);
+assert.equal(results.at(-1).prompt.ok, false, 'Unrendered SVG is not a source');
+assert.ok(!results[5].prompt.text.includes('12'), 'Separate number nodes never become 12');
+assert.equal(math.validateExam([question], [entry], options).mappings[0].verification.basis, 'snapshot');
+assert.equal(math.validateExam([question], [{ ...entry, snapshot_id: 'expired' }], options).ok, false);
+assert.equal(math.validateExam([question], [{ ...entry, noi_dung_dap_an: 'y+1' }], options).ok, false);
+const raw = math.validateExam([question], [{ ...entry, snapshot_id: undefined, noi_dung_dap_an: unknown }]);
+assert.equal(raw.ok, true);
+assert.equal(raw.mappings[0].verification.evidence, 'exact_source');
+const validId = math.validateExam([question], [{ ...entry, snapshot_id: undefined, dap_an: 'A', id_dap_an: 'b', noi_dung_dap_an: 'x+1' }]);
+assert.equal(validId.ok, true, 'Unrelated unsupported choice does not block a valid ID');
+assert.equal(validId.mappings[0].verification.basis, 'structured');
+const validPositionWithContent = math.validateExam([question], [{ ...entry, dap_an: 'B', noi_dung_dap_an: '$x+1$' }], options);
+assert.equal(validPositionWithContent.ok, true, 'Unrelated unsupported choice cannot veto current snapshot identity plus equal content');
+assert.equal(validPositionWithContent.mappings[0].verification.basis, 'snapshot');
+const duplicate = { ...question, choices: [question.choices[0], { ...question.choices[0], label: 'B', idOption: 'b' }] };
+assert.equal(math.validateExam([duplicate], [{ ...entry, noi_dung_dap_an: unknown }]).ok, false);
+assert.equal(math.validateExam([{ ...question, choices: [{ ...question.choices[0], text: other }, question.choices[1]] }], [entry], options).ok, false);
+const tf = { ...question, answerType: 'TF', choices: question.choices.map((c, i) => ({ ...c, label: i ? 'b' : 'a' })) };
+const tfEntry = { id: tf.sourceId, loai: 'TF', dap_an: { a: 'Đúng', b: 'Sai' }, math_content: { version: 1, statements: { a: math.metadata(unknown), b: math.metadata('x+1') } } };
+assert.equal(math.validateExam([tf], [tfEntry]).mappings[0].verification.basis, 'snapshot');
+const shuffledTf = { ...tf, choices: [{ ...tf.choices[1], label: 'a' }, { ...tf.choices[0], label: 'b' }] };
+assert.deepEqual(math.validateExam([shuffledTf], [tfEntry]).mappings[0].answer, { a: 'Sai', b: 'Đúng' });
+const prompt = cli.buildPrompt([question], snapshot);
+assert.ok(prompt.includes(unknown));
+const materialQuestions = cli.parseApiQuestions([{dataMaterial:{contentHtml:content,datas:[{
+  stepIndex:0,numberQuestion:5002,typeAnswer:0,languagesData:{vi:{content:'Câu liên quan tư liệu',
+    options:[unknown,other,'x+1','x+2'].map((text,i)=>({idOption:i,content:text}))}}
+}]}}]);
+assert.equal(materialQuestions[0].choices.length,4);
+const materialPrompt = cli.buildPrompt(materialQuestions);
+assert.ok(materialPrompt.includes(unknown) && materialPrompt.includes(other) && materialPrompt.includes('Câu liên quan tư liệu'));
+const incompleteQuestions = cli.parseApiQuestions([{dataStandard:{stepIndex:0,numberQuestion:5003,typeAnswer:0,
+  languagesData:{vi:{content:'Thiếu nguồn một phương án',options:[{content:'x+1'},{content:''}]}}}}]);
+assert.equal(incompleteQuestions[0].choices.length,2, 'Do not silently remove an empty choice');
+assert.throws(()=>cli.buildPrompt(incompleteQuestions),e=>e.report?.issues.some(i=>i.code==='SCRAPE_INCOMPLETE'));
+// WeakMap contexts intentionally belong to the exact collected array.
+const questions = [question]; cli.buildPrompt(questions, snapshot);
+const saved = cli.validateAndEnrichAnswers([{ ...entry, noi_dung_dap_an: unknown }], questions);
+assert.equal(saved[0].noi_dung_dap_an, unknown);
+assert.equal(saved[0].verification.basis, 'snapshot');
+assert.equal(cli.matchBankAnswers(questions, JSON.parse(JSON.stringify(saved))).matched.length, 1);
+const long = 'snapshot_id: shared\n' + [1, 2, 3].map(n => `=== CÂU ${n} ===\n${'x'.repeat(100)}\n`).join('');
+const parts = math.splitPrompt(long, 155);
+assert.equal(parts.length, 3);
+assert.equal(parts.map(p => p.replace('snapshot_id: shared\n', '')).join(''), long.replace('snapshot_id: shared\n', ''));
+assert.ok(parts.every(p => p.startsWith('snapshot_id: shared')));
+assert.throws(() => math.splitPrompt(long, 50), /vượt giới hạn/);
+
+async function mount(browser) {
+  const page = await browser.newPage();
+  await page.setRequestInterception(true);
+  page.on('request', r => r.respond({ status: 200, contentType: 'text/html', body: '<html></html>' }));
+  await page.goto('https://app.onluyen.vn/school/test/step/source-fixture');
+  await page.setContent('<div class="answer-sheet"><button class="option">1</button><button class="option">2</button></div><div id="test-step-question"><div class="question-container"></div></div>');
+  await page.evaluate(({ unknown, other }) => {
+    window.__store = {}; window.__messages = []; window.__clicks = 0; window.__submits = 0; window.__reads = 0;
+    window.__sources = [[unknown, 'x+1'], [other, 'x+2']];
+    window.__render = n => {
+      const root = document.querySelector('.question-container');
+      root.innerHTML = `<div class="question-info"><div class="num">Câu: ${n} #${1000+n}</div></div><div class="question-name">Tư liệu &amp; ghi chú<br>Đề câu ${n} ${unknown}</div>${__sources[n-1].map((s,i)=>`<div class="question-option"><span class="question-option-label">${i?'B':'A'}</span><div class="question-option-content">${s}</div><input type="checkbox"></div>`).join('')}<div class="submit-bar"><button>BỎ QUA</button></div>`;
+      root.querySelectorAll('.question-option').forEach(el => el.addEventListener('click', () => {
+        __clicks++; root.querySelectorAll('input').forEach(input => input.checked = false); el.querySelector('input').checked = true;
+      }));
+      root.querySelector('button').onclick = () => { __submits++; if (n === 1) __render(2); else root.querySelector('button').textContent = 'KẾT THÚC'; };
+    };
+    document.querySelectorAll('.answer-sheet button').forEach(button => button.onclick = () => { __reads++; __render(Number(button.textContent)); });
+    __render(1); Element.prototype.scrollIntoView = () => {};
+    window.chrome = { runtime: { getURL: () => 'data:text/javascript,', getManifest: () => ({version:'test'}), onMessage: { addListener:f=>window.__listener=f }, sendMessage:async m=>__messages.push(m) }, storage:{local:{get:(_k,cb)=>cb(__store),set:v=>Object.assign(__store,v)}} };
+  }, { unknown, other });
+  return page;
+}
+const send = (page, payload) => page.evaluate(p => new Promise(resolve => __CLI_CONTENT_LISTENER__(p, {}, resolve)), payload);
+(async () => {
+  const executablePath = ['C:/Program Files/Google/Chrome/Application/chrome.exe','C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'].find(fs.existsSync);
+  const browser = await puppeteer.launch({ executablePath, headless: true });
+  try {
+    const page = await mount(browser);
+    const prepared = await cli.prepareExam(page);
+    assert.deepEqual(await page.evaluate(values => values.map(value => ({prompt: OnluyenMath.toPromptContent(value),fingerprint: OnluyenMath.sourceFingerprint(value)})), corpus), results);
+    assert.equal(prepared.ok, true, prepared.error);
+    assert.equal(prepared.questions.length, 2);
+    assert.ok(prepared.prompt.includes(unknown) && prepared.prompt.includes(other));
+    assert.match(prepared.prompt, /B\. x\+2/);
+    const again = await send(page, { action:'OL_GET_AI_PROMPT' });
+    assert.ok(again.prompt.includes(prepared.snapshot.id), 'Repeated exports keep the same source snapshot');
+    cli.buildPrompt(prepared.questions, {...prepared.snapshot, questions: prepared.questions});
+    const answers = cli.validateAndEnrichAnswers(prepared.questions.map(q => ({cau:q.number,id:q.sourceId,loai:'MCQ',dap_an:'A',snapshot_id:prepared.snapshot.id})), prepared.questions);
+    const loaded = await send(page, {action:'OL_LOAD_DATABASE',json:answers});
+    assert.equal(loaded.ok,true,loaded.error);
+    const failed = await send(page,{action:'OL_LOAD_DATABASE',json:answers.map((a,i)=>i?{...a,noi_dung_dap_an:'Wrong final answer'}:a)});
+    assert.equal(failed.ok,false);
+    assert.deepEqual(await page.evaluate(()=>[__reads,__clicks,__submits]),[2,0,0]);
+    assert.equal((await send(page,{action:'OL_PING'})).databaseJson, loaded.json);
+    const started = await send(page,{action:'OL_START_BOT'});
+    assert.equal(started.ok,true,started.error);
+    await page.waitForFunction(()=>!window.__BOT_RUNNING__);
+    assert.deepEqual(await page.evaluate(()=>__CLI_RUNTIME_MESSAGES__.filter(m=>m.action==='BOT_ERROR')),[]);
+    assert.deepEqual(await page.evaluate(()=>[__reads,__clicks,__submits]),[2,2,2], 'Export/import/start share one full scan; unsupported source can still use its snapshot');
+    await page.setContent(`<div id="ans-student-1"><div class="question-header">Câu 1 #5001</div><div class="question-name">History source</div><div class="question-option bg-correct"><span class="question-option-label">A</span><div class="question-option-content">${unknown}</div></div></div>`);
+    const history = await send(page, {action:'OL_GET_HISTORY_ANSWERS'});
+    assert.equal(history.ok,true,history.error);
+    assert.equal(history.answers[0].noi_dung_dap_an,undefined, 'Do not save a MathML display placeholder as supplied answer content');
+    assert.ok(history.answers[0].math_content.answer.segments.some(s=>s.raw===unknown));
+    const historyQuestion = {...question,sourceId:'5001',prompt:'History source'};
+    assert.equal(math.validateExam([historyQuestion],history.answers).ok,true, 'History retains a usable unknown source');
+    await page.close();
+    console.log('OK: lossless prompt sources, parser diagnostics, identity proofs, raw-source cache, chunking, Node/browser parity and shared snapshot execution');
+  } finally { await browser.close(); }
+})().catch(error => { console.error(error); process.exitCode = 1; });

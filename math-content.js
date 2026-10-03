@@ -407,7 +407,8 @@
   function render(node) {
     if (!node) return '';
     if (node.t === 'symbol' || node.t === 'number' || node.t === 'function' || node.t === 'literal') return node.v;
-    if (node.t === 'row') return node.items.map(render).join('');
+    if (node.t === 'row') return node.items.map((item, i) =>
+      `${i && item.t === 'number' && node.items[i - 1].t === 'number' ? ' ' : ''}${render(item)}`).join('');
     if (node.t === 'fenced') {
       const delimiter = value => value ? /[{}]/.test(value) ? `\\${value}` : value : '.';
       return `\\left${delimiter(node.open)}${render(node.body)}\\right${delimiter(node.close)}`;
@@ -448,8 +449,10 @@
     return day >= 1 && day <= days[month - 1];
   }
   function splitPlain(value, segments, prose = false) {
-    let s = decode(value).trim();
+    const decoded = decode(value);
+    let s = decoded.trim();
     if (!s) return;
+    if (/^\s*\n/.test(decoded)) segments.push({ format: 'text', raw: '\n' });
     const pattern = /\$\$([\s\S]*?)\$\$|\$([^$]*?)\$|\\\(([\s\S]*?)\\\)|\\\[([\s\S]*?)\\\]/g;
     let end = 0, found = false, lineHasMath = false;
     for (const m of s.matchAll(pattern)) {
@@ -472,7 +475,10 @@
     if (/\$|\\[()[\]]/.test(s)) incomplete('Delimiter công thức chưa đóng');
     const lines = s.split(/\r?\n/);
     if (lines.length > 1 && lines.slice(1).some(line => /^\s*(\d+|[A-Za-z])\s*\)(?=\s|$)/.test(line))) {
-      lines.forEach(line => splitPlain(line, segments, prose));
+      lines.forEach((line, index) => {
+        if (index) segments.push({ format: 'text', raw: '\n' });
+        splitPlain(line, segments, prose);
+      });
       return;
     }
     // Number/letter list markers belong to surrounding prose. A fragment like
@@ -509,6 +515,8 @@
     }
   }
   function readContent(input) {
+    const segments = [];
+    let source = '';
     try {
       if (input?.kind === 'canonical-math-content') return readContent(input.content);
       if (input && typeof input === 'object' && Array.isArray(input.segments)) {
@@ -518,8 +526,7 @@
         return { ...input, ...(error ? { error } : {}), status: 'ok', version: 1, segments: input.segments.map(s => ({ ...s })) };
       }
       if (input && typeof input === 'object' && typeof input.outerHTML !== 'string') fail('Đối tượng nội dung công thức không hợp lệ');
-      const source = input?.outerHTML ?? String(input ?? '');
-      const segments = [];
+      source = input?.outerHTML ?? String(input ?? '');
       if (/<(?:math\b|mjx-|[A-Za-z][\w:-]*(?:\s|>))/i.test(source)) {
         const tree = markup(source);
         const proseDocument = /<(?:p|div|li|br)\b/i.test(source);
@@ -534,7 +541,13 @@
           // text "1 " + <math><mo>)</mo></math>. Recognize it only after a
           // numeric label at the beginning of a prose line, before other math.
           const marker = !lineHasMath && pending.match(/(?:^|\n)\s*\d+\s*$/);
-          if (marker && (format === 'latex' ? raw.trim() === ')' : xmlText(node).trim() === ')' && parseMathML(node).t === 'symbol')) {
+          let closingLabel = format === 'latex' && raw.trim() === ')';
+          if (marker && format === 'mathml') {
+            try { const body = parseMathML(node); closingLabel = body.t === 'symbol' && body.v === ')'
+              || body.t === 'row' && body.items.length === 1 && body.items[0].t === 'symbol' && body.items[0].v === ')'; }
+            catch (_error) { /* Unknown markup stays in the source. */ }
+          }
+          if (marker && closingLabel) {
             append(')');
             return;
           }
@@ -544,12 +557,14 @@
           if (proseDocument && !lineHasMath && /(?:^|\n)\s*$/.test(pending)) {
             const label = (format === 'latex' ? raw : xmlText(node)).trim().match(/^(\d+)\s*\)$/);
             if (label) {
-              const body = format === 'latex' ? parseLatex(raw) : parseMathML(node);
-              if (body.t === 'row' && body.items.length === 2 && body.items[0].t === 'number'
-                  && body.items[0].v === label[1] && body.items[1].t === 'symbol' && body.items[1].v === ')') {
-                append(`${label[1]})`);
-                return;
-              }
+              try {
+                const body = format === 'latex' ? parseLatex(raw) : parseMathML(node);
+                if (body.t === 'row' && body.items.length === 2 && body.items[0].t === 'number'
+                    && body.items[0].v === label[1] && body.items[1].t === 'symbol' && body.items[1].v === ')') {
+                  append(`${label[1]})`);
+                  return;
+                }
+              } catch (_error) { /* Preserve the original formula below. */ }
             }
           }
           flush(); segments.push({ format, raw }); lineHasMath = true;
@@ -560,12 +575,21 @@
             emitMath('latex', xmlText(node)); return;
           }
           if (['svg', 'script', 'style', 'annotation', 'annotation-xml'].includes(node.name)) return;
-          if (node.name === 'math') { emitMath('mathml', xmlSource(node), node); return; }
+          if (node.name === 'math') {
+            const annotation = (function find(n) {
+              if (typeof n === 'string') return null;
+              if (n.name === 'annotation' && /^(?:application\/(?:x-)?tex|text\/tex)$/i.test(n.attrs.encoding || '')) return n;
+              return n.nodes.map(find).find(Boolean);
+            })(node);
+            if (annotation && xmlText(annotation).trim()) emitMath('latex', xmlText(annotation), node);
+            else emitMath('mathml', xmlSource(node), node);
+            return;
+          }
           if (node.name === 'mjx-container') {
             const findMath = n => typeof n === 'string' ? null : n.name === 'math' ? n : n.nodes.map(findMath).find(Boolean);
             const math = findMath(node);
-            if (math) emitMath('mathml', xmlSource(math), math);
-            else if (node.attrs['data-latex']) emitMath('latex', node.attrs['data-latex']);
+            if (node.attrs['data-latex']) emitMath('latex', node.attrs['data-latex']);
+            else if (math) walk(math);
             else incomplete('MathJax chưa render: chưa có MathML/LaTeX gốc');
             return;
           }
@@ -576,7 +600,7 @@
         walk(tree); flush();
       } else splitPlain(source, segments);
       return { status: 'ok', version: 1, segments };
-    } catch (e) { return { status: e.status || 'unsupported', reason: e.message, version: 1, segments: [], source: input?.outerHTML ?? String(input ?? '') }; }
+    } catch (e) { return { status: e.status || 'unsupported', reason: e.message, version: 1, segments, source }; }
   }
   function canonicalize(input) {
     const content = readContent(input);
@@ -677,20 +701,108 @@
     const describe = token => token ? token.v ?? render(token.body) : '(hết nội dung)';
     return { status: 'different', code: 'CONTENT_DIFFERENT', reason: 'Nội dung/cấu trúc công thức khác nhau', diagnostic: { index: differenceIndex, left: a.tokens[differenceIndex] ?? null, right: b.tokens[differenceIndex] ?? null, leftText: describe(a.tokens[differenceIndex]), rightText: describe(b.tokens[differenceIndex]) } };
   }
+  // Formatting a prompt must not depend on parsing every possible formula.
+  // In particular, an unknown MathML element is exported as MathML, never as
+  // its flattened textContent or the surrounding page HTML.
+  function toPromptContent(input, options = {}) {
+    const content = readContent(input);
+    const diagnostics = [];
+    if (content.status !== 'ok' || content.error) {
+      const problem = content.error || content;
+      return { ok: false, status: problem.status, text: '', segments: content.segments || [],
+        diagnostics: [{ phase: 'scrape', status: problem.status, reason: problem.reason }] };
+    }
+    if (!content.segments.some(segment => String(segment.raw || '').trim())) {
+      return { ok: false, status: 'incomplete', text: '', segments: content.segments,
+        diagnostics: [{ phase: 'scrape', status: 'incomplete', reason: 'Nguồn câu hỏi hoặc lựa chọn trống' }] };
+    }
+    const pieces = content.segments.map((segment, index) => {
+      const raw = String(segment.raw ?? '');
+      if (segment.format === 'text' || segment.format === 'plain') {
+        if (segment.format === 'plain') {
+          const parsed = canonicalize({ version: 1, segments: [segment] });
+          if (parsed.status !== 'ok') diagnostics.push({ phase: 'parse', index, format: 'plain', status: parsed.status, reason: parsed.reason });
+        }
+        return decode(raw);
+      }
+      if (segment.format === 'latex') {
+        try { const body = parseLatex(raw); validateFences(body); if (options.display) return render(body); }
+        catch (e) { diagnostics.push({ phase: 'parse', index, format: 'latex', status: e.status || 'unsupported', reason: e.message }); }
+        return options.display ? raw : `\\(${raw}\\)`;
+      }
+      if (segment.format === 'mathml') {
+        try {
+          const tree = markup(raw), nodes = elements(tree);
+          if (nodes.length !== 1) incomplete('Nguồn MathML không đầy đủ');
+          const body = parseMathML(nodes[0]);
+          validateFences(body);
+          if (options.display) return render(body);
+          const latexTree = value => {
+            if (Array.isArray(value)) return value.map(latexTree);
+            if (!value || typeof value !== 'object') return value;
+            const copied = Object.fromEntries(Object.entries(value).map(([key, child]) => [key, latexTree(child)]));
+            if (copied.t === 'symbol' && /^[{}%#&$_]$/.test(copied.v)) copied.v = `\\${copied.v}`;
+            if (copied.t === 'function' && /^[a-z]+$/.test(copied.v)) copied.v = `\\${copied.v} `;
+            return copied;
+          };
+          const latex = render(latexTree(body));
+          const converted = { version: 1, segments: [{ format: 'latex', raw: latex }] };
+          if (compare({ version: 1, segments: [segment] }, converted).status !== 'equal') {
+            fail('Chuyển MathML sang LaTeX chưa bảo toàn cấu trúc; giữ nguồn MathML');
+          }
+          return `\\(${latex}\\)`;
+        } catch (e) {
+          diagnostics.push({ phase: 'parse', index, format: 'mathml', status: e.status || 'unsupported', reason: e.message });
+          return options.display ? `[MathML] ${raw} [/MathML]` : `\n[MathML]\n${raw}\n[/MathML]\n`;
+        }
+      }
+      diagnostics.push({ phase: 'parse', index, format: segment.format, status: 'unsupported', reason: 'Định dạng nguồn chưa hỗ trợ' });
+      return '';
+    });
+    if (diagnostics.some(issue => issue.format && !['text', 'plain', 'latex', 'mathml'].includes(issue.format))) {
+      return { ok: false, status: 'unsupported', text: '', segments: content.segments, diagnostics };
+    }
+    const text = pieces.join(' ').replace(/ +([.,;:])/g, '$1').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+    return { ok: !!text, status: text ? 'ok' : 'incomplete', text, segments: content.segments, diagnostics };
+  }
   function text(input) {
-    const c = canonicalize(input);
-    if (c.status !== 'ok') return c.content?.source || c.source || (typeof input === 'string' ? input : input?.textContent || '');
-    return c.content.segments.map(segment => ['text', 'plain'].includes(segment.format) ? segment.raw : render(canonicalize({ version: 1, segments: [segment] }).parts[0].body))
-      .join(' ').replace(/\s+([.,;])/g, '$1').replace(/\s+/g, ' ').trim();
+    return toPromptContent(input, { display: true }).text.replace(/ +([.,;])/g, '$1').replace(/[ \t]+/g, ' ').trim();
   }
   function metadata(input, origin = 'source') {
     const c = readContent(input);
-    return c.status === 'ok' ? { version: 1, origin, segments: c.segments } : { version: 1, origin, segments: [{ format: 'plain', raw: c.source }], error: { status: c.status, reason: c.reason } };
+    return c.status === 'ok' ? { version: 1, origin, segments: c.segments, ...(c.error ? { error: c.error } : {}) }
+      : { version: 1, origin, segments: c.segments || [], source: c.source,
+        error: { status: c.status, reason: c.reason } };
   }
   function combine(...inputs) {
     const contents = inputs.map(input => typeof input === 'object' && input?.segments ? input : metadata(input));
     const error = contents.find(c => c.error)?.error;
     return { version: 1, origin: 'source', segments: contents.flatMap(c => c.segments), ...(error ? { error } : {}) };
+  }
+  function sourceFingerprint(input) {
+    const canonical = canonicalize(input);
+    if (canonical.status === 'ok') return JSON.stringify(['canonical', canonical.key]);
+    const content = readContent(input);
+    return JSON.stringify(['source', content.status, content.error?.status || '',
+      (content.segments || []).map(segment => [segment.format, String(segment.raw).replace(/\r\n?/g, '\n')]),
+      content.status !== 'ok' || content.error ? content.source || '' : '']);
+  }
+  function exactSourceMatch(left, right) {
+    const a = readContent(left), b = readContent(right);
+    if (a.status !== 'ok' || b.status !== 'ok' || a.error || b.error || !a.segments.length || !b.segments.length) return false;
+    return JSON.stringify(a.segments.map(s => [s.format, String(s.raw).replace(/\r\n?/g, '\n')]))
+      === JSON.stringify(b.segments.map(s => [s.format, String(s.raw).replace(/\r\n?/g, '\n')]));
+  }
+  function sourceDifference(left, right) {
+    const a = readContent(left).segments || [], b = readContent(right).segments || [];
+    for (let index = 0; index < Math.max(a.length, b.length); index++) {
+      if (a[index]?.format === b[index]?.format && a[index]?.raw === b[index]?.raw) continue;
+      const x = String(a[index]?.raw || ''), y = String(b[index]?.raw || '');
+      let offset = 0; while (offset < Math.min(x.length, y.length) && x[offset] === y[offset]) offset++;
+      return { index, sourceOffset: offset, format: a[index]?.format || b[index]?.format || null,
+        leftText: x.slice(offset, offset + 100) || '(hết nguồn)', rightText: y.slice(offset, offset + 100) || '(hết nguồn)' };
+    }
+    return null;
   }
   function resolveChoice(choices, saved, optionId, imageRefs) {
     if (imageRefs !== undefined && imageRefs !== null) {
@@ -756,19 +868,68 @@
     const matches = choices.filter((_c, i) => comparisons[i]?.status === 'equal');
     const ids = optionId !== undefined && optionId !== null ? choices.filter(c => c.idOption !== undefined && String(c.idOption) === String(optionId)) : [];
     const bad = comparisons.find(c => c.status === 'unsupported' || c.status === 'incomplete');
-    if (bad) return { ...bad, choice: null };
+    if (bad && !(ids.length === 1 && matches.length === 1 && matches[0] === ids[0])) return { ...bad, choice: null };
     if (matches.length > 1 || ids.length > 1) return { status: 'different', reason: 'Khớp nhiều lựa chọn', choice: null };
     if (optionId != null && choices.some(c => c.idOption != null) && ids.length !== 1) return { status: 'different', code: 'ID_CONFLICT', reason: 'ID đáp án không tồn tại trong các lựa chọn hiện tại', choice: null };
     if (ids.length && hasSaved && matches[0] !== ids[0]) return { status: 'different', reason: 'ID đáp án và nội dung mâu thuẫn', choice: null };
     const choice = matches[0] || (!hasSaved && ids[0]);
     return choice ? { status: 'equal', reason: '', choice } : { status: 'different', reason: 'Không có lựa chọn khớp duy nhất', choice: null };
   }
+  function verifyChoice(choices, saved, optionId, imageRefs, context = {}) {
+    const failVerification = (code, reason, status = 'different') => ({ status, code, reason, choice: null,
+      verification: { version: 1, basis: 'blocked', reason } });
+    const ids = optionId == null ? [] : choices.filter(choice => choice.idOption != null && String(choice.idOption) === String(optionId));
+    if (optionId != null && ids.length !== 1) return failVerification('ID_CONFLICT', 'ID lựa chọn không khớp duy nhất.');
+    const labels = context.snapshotValid && context.label != null
+      ? choices.filter(choice => String(choice.label).toUpperCase() === String(context.label).toUpperCase()) : [];
+    if (labels.length > 1) return failVerification('MULTIPLE_MATCHES', 'Nhãn lựa chọn bị trùng.');
+    if (ids.length && labels.length && ids[0] !== labels[0]) return failVerification('ID_CONFLICT', 'ID lựa chọn và chữ cái mâu thuẫn.');
+    const byIdentity = ids[0] || labels[0] || null;
+    const hasSource = saved !== null && saved !== undefined && saved !== '';
+    if (hasSource || imageRefs != null) {
+      const resolved = resolveChoice(choices, saved, optionId, imageRefs);
+      if (resolved.status === 'equal') {
+        if (labels.length && labels[0] !== resolved.choice) return failVerification('ID_CONFLICT', 'Nội dung và chữ cái của snapshot mâu thuẫn.');
+        return { ...resolved, verification: { version: 1, basis: 'structured', reason: imageRefs != null ? 'Nguồn ảnh khớp duy nhất' : 'Nội dung có cấu trúc khớp duy nhất' } };
+      }
+      if (imageRefs != null) return resolved;
+      if (/mất cấu trúc/.test(resolved.reason || '')) return resolved;
+      const target = byIdentity || null;
+      const compared = target ? compare(saved, target.math_content || target.text) : null;
+      if (compared?.status === 'different') return failVerification('ID_CONFLICT', 'ID/chữ cái và nội dung đáp án mâu thuẫn.');
+      if (target && compared?.status === 'equal') return { status: 'equal', code: 'IDENTITY_MATCH', reason: '', choice: target,
+        verification: { version: 1, basis: ids.length ? 'structured' : 'snapshot',
+          evidence: ids.length ? 'option_id' : 'snapshot_label', reason: 'Định danh lựa chọn và nội dung có cấu trúc khớp' } };
+      // Raw source can prove identity when a parser does not know this syntax.
+      // It is never converted into a mathematical `equal` comparison.
+      const rawMatches = choices.filter(choice => exactSourceMatch(saved, choice.math_content || choice.text));
+      if ((target && rawMatches.includes(target)) || (rawMatches.length === 1 && !target)) {
+        return { status: 'equal', code: 'SOURCE_MATCH', reason: '', choice: target || rawMatches[0],
+          verification: { version: 1, basis: 'snapshot', evidence: 'exact_source',
+            reason: target ? 'Định danh lựa chọn và nguồn nguyên dạng khớp' : 'Nguồn công thức nguyên dạng khớp duy nhất' } };
+      }
+      if (rawMatches.length > 1) return failVerification('MULTIPLE_MATCHES', 'Nguồn nguyên dạng khớp nhiều lựa chọn.');
+      return { ...resolved, code: resolved.code || (target ? 'ID_CONFLICT' : errorCode(resolved.reason, resolved.status)),
+        ...(target ? { diagnostic: { ...sourceDifference(saved, target.math_content || target.text), choiceLabel: target.label } } : {}), choice: null };
+    }
+    if (!byIdentity) return failVerification('SNAPSHOT_EXPIRED', 'Thiếu nội dung/ID và snapshot hợp lệ.');
+    const targetSource = byIdentity.math_content || byIdentity.text;
+    if (!toPromptContent(targetSource).ok && !(byIdentity.images || []).length) {
+      return failVerification('SCRAPE_INCOMPLETE', 'Lựa chọn được chỉ định chưa có nguồn.', 'incomplete');
+    }
+    if (!context.snapshotValid && canonicalize(targetSource).status !== 'ok') {
+      return failVerification('SNAPSHOT_EXPIRED', 'Công thức chưa hỗ trợ cần snapshot hiện tại để dùng ID.');
+    }
+    return { status: 'equal', code: 'IDENTITY_MATCH', reason: '', choice: byIdentity,
+      verification: { version: 1, basis: context.snapshotValid ? 'snapshot' : 'structured',
+        evidence: ids.length ? 'option_id' : 'snapshot_label', reason: ids.length ? 'ID lựa chọn hợp lệ' : 'Chữ cái của snapshot hiện tại' } };
+  }
   function signature(questions) {
     return JSON.stringify(questions.map(q => ({
       number: q.number, id: q.sourceId || null, type: q.answerType,
-      prompt: canonicalize(q.math_content?.question || q.prompt).key || null,
+      prompt: sourceFingerprint(q.math_content?.question || q.prompt),
       choices: (q.choices || []).map(c => ({ label: c.label, id: c.idOption ?? null,
-        key: canonicalize(c.math_content || c.text).key || null,
+        key: sourceFingerprint(c.math_content || c.text),
         images: (c.images || []).map(i => typeof i === 'string' ? i : i.src) }))
     })));
   }
@@ -780,12 +941,15 @@
     return status === 'unsupported' ? 'UNSUPPORTED_SYNTAX' : status === 'incomplete' ? 'INCOMPLETE_SOURCE' : 'CONTENT_DIFFERENT';
   }
   function validateExam(questions, entries, options = {}) {
-    const issues = [], mappings = [], used = new Set();
-    const snapshotValid = !!options.snapshotId && options.snapshotSignature === signature(questions);
+    const issues = [], warnings = [], mappings = [], used = new Set();
+    const snapshotQuestions = options.snapshotQuestions || questions;
+    const snapshotValid = !!options.snapshotId && options.snapshotSignature === signature(snapshotQuestions)
+      && questions.every(q => snapshotQuestions.some(full => signature([q]) === signature([full])));
     const add = (q, result, source, label) => {
       const value = readContent(source || '');
       issues.push({ number: q?.number ?? null, id: q?.sourceId || null, label: label ?? null,
         status: result.status || 'different', code: result.code || errorCode(result.reason, result.status),
+        phase: result.phase || 'match', origin: source?.origin && source.origin !== 'source' ? source.origin : q?.origin || source?.origin || null,
         reason: result.reason, ...(result.diagnostic ? { diagnostic: result.diagnostic } : {}),
         source: value.segments.map(s => ({ format: s.format, raw: String(s.raw).slice(0, 8192) })) });
     };
@@ -800,23 +964,32 @@
     const ids = new Set(), numbers = new Set();
     for (const q of questions) {
       const start = issues.length;
+      if (q.readError) add(q, { status: 'incomplete', code: 'SCRAPE_INCOMPLETE', phase: 'scrape', reason: q.readError });
       if (numbers.has(q.number) || (q.sourceId && ids.has(String(q.sourceId)))) {
         add(q, { code: 'DUPLICATE_QUESTION', reason: 'ID hoặc số câu bị trùng trong đề.' });
       }
       numbers.add(q.number); if (q.sourceId) ids.add(String(q.sourceId));
       const choices = q.choices || [];
-      if (q.answerType !== 'SHORT' && choices.length < Math.max(2, q.expectedChoiceCount || 0)) {
+      if (q.readError || q.answerType !== 'SHORT' && choices.length < Math.max(2, q.expectedChoiceCount || 0)) {
         add(q, { status: 'incomplete', code: 'NOT_RENDERED', reason: 'Chưa đọc đủ lựa chọn.' });
       }
       for (const [source, label] of [[q.math_content?.question || q.prompt, null], ...choices.map(c => [c.math_content || c.text, c.label])]) {
-        const c = canonicalize(source);
-        if (c.status !== 'ok') add(q, c, source, label);
+        const rendered = toPromptContent(source);
+        if (!rendered.ok && !(label && choices.find(c => c.label === label)?.images?.length)) {
+          const problem = rendered.diagnostics[0] || {};
+          add(q, { status: rendered.status, code: problem.reason?.includes('MathJax') ? 'NOT_RENDERED' : 'SCRAPE_INCOMPLETE',
+            phase: 'scrape', reason: problem.reason || 'Nguồn câu hỏi hoặc lựa chọn chưa đầy đủ' }, source, label);
+        } else for (const diagnostic of rendered.diagnostics) {
+          warnings.push({ number: q.number, id: q.sourceId || null, label, origin: source?.origin && source.origin !== 'source' ? source.origin : q.origin || source?.origin || null,
+            phase: 'parse', format: diagnostic.format, status: diagnostic.status, reason: diagnostic.reason });
+        }
       }
       const candidates = entries.filter(e => {
         const id = e.id ?? e.question_id ?? e.sourceId;
         if (id != null && String(id).trim()) return String(id) === String(q.sourceId);
         const prompt = e.math_content?.question || e.noi_dung_cau_hoi || e.question_text || e.q_content;
-        if (prompt) return compare(prompt, q.math_content?.question || q.prompt).status === 'equal';
+        if (prompt) return compare(prompt, q.math_content?.question || q.prompt).status === 'equal'
+          || exactSourceMatch(prompt, q.math_content?.question || q.prompt);
         return snapshotValid && e.snapshot_id === options.snapshotId && Number(e.cau ?? e.q ?? e.number) === q.number;
       });
       if (candidates.length !== 1) {
@@ -831,12 +1004,14 @@
       const savedPrompt = entry.math_content?.question || entry.noi_dung_cau_hoi || entry.question_text;
       if (savedPrompt) {
         const result = compare(savedPrompt, q.math_content?.question || q.prompt);
-        if (result.status !== 'equal') add(q, { ...result, code: 'QUESTION_ID_CONFLICT', reason: 'ID câu và nội dung đề mâu thuẫn.' }, savedPrompt);
+        if (result.status !== 'equal' && !exactSourceMatch(savedPrompt, q.math_content?.question || q.prompt)) {
+          add(q, { ...result, code: 'QUESTION_ID_CONFLICT', reason: 'ID câu và nội dung đề mâu thuẫn.' }, savedPrompt);
+        }
       }
       const answer = entry.dap_an ?? entry.answer ?? entry.a;
       if (q.answerType === 'SHORT') {
         if (answer == null || String(answer).trim() === '') add(q, { code: 'MISSING_ANSWER', reason: 'Thiếu đáp án trả lời ngắn.' });
-        if (issues.length === start) mappings.push({ question: q, entry, answer: String(answer).trim() });
+        if (issues.length === start) mappings.push({ question: q, entry, answer: String(answer).trim(), verification: { version: 1, basis: 'structured', reason: 'ID/nội dung câu khớp và giá trị trả lời ngắn hợp lệ' } });
         continue;
       }
       if (q.answerType === 'TF') {
@@ -844,48 +1019,101 @@
         const sources = entry.math_content?.statements || {};
         const choiceIds = entry.id_cac_y || {};
         const keys = [...new Set([...Object.keys(texts), ...Object.keys(sources), ...Object.keys(choiceIds)])];
-        const mapped = {}, mappedKeys = new Set();
-        for (const choice of choices) {
-          const identified = keys.filter(k => choiceIds[k] != null && String(choiceIds[k]) === String(choice.idOption));
-          if (identified.some(k => (sources[k] || texts[k]) && compare(sources[k] || texts[k], choice.math_content || choice.text).status !== 'equal')) {
-            add(q, { code: 'ID_CONFLICT', reason: 'ID và nội dung ý Đúng/Sai mâu thuẫn.' }, '', choice.label);
+        const mapped = {}, evidence = [];
+        for (const key of keys.length ? keys : Object.keys(answer || {})) {
+          const source = sources[key] || texts[key];
+          const result = verifyChoice(choices, source, choiceIds[key], null,
+            { snapshotValid: positional, label: positional ? key : null });
+          if (result.status !== 'equal') { add(q, result, source, key); continue; }
+          if (sources[key] && texts[key]) {
+            const additional = verifyChoice(choices, texts[key], choiceIds[key], null,
+              { snapshotValid: positional, label: positional ? key : null });
+            if (additional.status !== 'equal' || additional.choice !== result.choice) {
+              add(q, { code: 'ID_CONFLICT', reason: 'Nguồn và nội dung ý Đúng/Sai mâu thuẫn hoặc chưa xác minh được.' }, texts[key], key);
+              continue;
+            }
           }
-          let matches = keys.filter(k => {
-            const source = sources[k] || texts[k];
-            const id = choiceIds[k];
-            if (id != null && String(id) !== String(choice.idOption)) return false;
-            return source ? compare(source, choice.math_content || choice.text).status === 'equal' : id != null;
-          });
-          if (!keys.length && positional) matches = [choice.label];
-          const key = matches.length === 1 ? matches[0] : null;
-          const value = key != null ? answer?.[key] : null;
-          if (key == null || mappedKeys.has(key)) add(q, { code: 'MULTIPLE_MATCHES', reason: 'Không khớp duy nhất nội dung/ID ý Đúng/Sai.' }, sources[key] || texts[key], choice.label);
-          else if (!/^(?:đúng|dung|sai|true|false|1|0)$/i.test(String(value))) add(q, { code: 'MISSING_ANSWER', reason: 'Thiếu giá trị Đúng/Sai hợp lệ.' }, '', choice.label);
-          else { mappedKeys.add(key); mapped[choice.label] = /^(?:đúng|dung|true|1)$/i.test(String(value)) ? 'Đúng' : 'Sai'; }
+          const label = result.choice.label, value = answer?.[key];
+          if (Object.hasOwn(mapped, label)) add(q, { code: 'MULTIPLE_MATCHES', reason: 'Nhiều ý cùng khớp một lựa chọn Đúng/Sai.' }, source, key);
+          else if (!/^(?:đúng|dung|sai|true|false|1|0)$/i.test(String(value))) add(q, { code: 'MISSING_ANSWER', reason: 'Thiếu giá trị Đúng/Sai hợp lệ.' }, '', key);
+          else { mapped[label] = /^(?:đúng|dung|true|1)$/i.test(String(value)) ? 'Đúng' : 'Sai'; evidence.push(result.verification); }
         }
+        if (Object.keys(mapped).length !== choices.length) add(q, { code: 'MISSING_ANSWER', reason: 'Chưa xác minh đủ các ý Đúng/Sai.' });
         if (!keys.length && !positional) add(q, { code: 'SNAPSHOT_EXPIRED', reason: 'Đáp án Đúng/Sai theo vị trí cần snapshot_id của đề hiện tại.' });
-        if (issues.length === start) mappings.push({ question: q, entry, answer: mapped });
+        if (issues.length === start) mappings.push({ question: q, entry, answer: mapped,
+          verification: { version: 1, basis: evidence.some(e => e.basis === 'snapshot') ? 'snapshot' : 'structured',
+            statements: evidence, reason: 'Các ý Đúng/Sai khớp duy nhất' } });
         continue;
       }
       const source = entry.math_content?.answer || entry.noi_dung_dap_an_goc || entry.noi_dung_dap_an || entry.answer_text || entry.a_content;
       const imageRefs = entry.anh_dap_an ?? entry.answer_images;
       const optionId = entry.id_dap_an ?? entry.answer_id ?? entry.answerId;
-      let resolution;
-      if (!source && imageRefs == null && optionId == null) {
-        const choice = positional ? choices.find(c => String(c.label).toUpperCase() === String(answer).toUpperCase()) : null;
-        resolution = choice ? { status: 'equal', choice } : { code: 'SNAPSHOT_EXPIRED', reason: 'Đáp án chỉ có chữ cái cần snapshot_id của đề hiện tại.' };
-      } else resolution = resolveChoice(choices, source, optionId, imageRefs);
+      const resolution = verifyChoice(choices, source, optionId, imageRefs,
+        { snapshotValid: positional, label: positional ? answer : null });
+      const suppliedText = entry.noi_dung_dap_an_goc || entry.noi_dung_dap_an || entry.answer_text || entry.a_content;
+      if (entry.math_content?.answer && suppliedText && resolution.status === 'equal') {
+        const supplied = verifyChoice(choices, suppliedText, optionId, imageRefs,
+          { snapshotValid: positional, label: positional ? answer : null });
+        if (supplied.status !== 'equal' || supplied.choice !== resolution.choice) {
+          add(q, { ...supplied, code: 'ID_CONFLICT', reason: 'Nguồn và nội dung đáp án người dùng gửi mâu thuẫn hoặc chưa xác minh được.' }, suppliedText);
+        }
+      }
       if (resolution.status !== 'equal') {
         const comparisons = source ? choices.map(c => ({ ...compare(source, c.math_content || c.text), label: c.label })) : [];
         const difference = comparisons.find(c => c.diagnostic);
-        add(q, { ...resolution, ...(difference ? { diagnostic: { ...difference.diagnostic, choiceLabel: difference.label } } : {}) }, source);
-      } else if (issues.length === start) mappings.push({ question: q, entry, choice: resolution.choice, answer: resolution.choice.label });
+        add(q, { ...resolution, ...(!resolution.diagnostic && difference ? { diagnostic: { ...difference.diagnostic, choiceLabel: difference.label } } : {}) }, source);
+      } else if (issues.length === start) mappings.push({ question: q, entry, choice: resolution.choice,
+        answer: resolution.choice.label, verification: resolution.verification });
     }
     for (const entry of entries) if (!used.has(entry)) add(null, { code: 'QUESTION_NOT_FOUND', reason: `Không tìm thấy câu của đáp án ID ${entry.id ?? entry.sourceId ?? 'không có'}, số ${entry.cau ?? entry.q ?? '?'}.` }, entry.math_content?.question || entry.noi_dung_cau_hoi);
-    return { version: 1, ok: !issues.length, count: questions.length, issues, mappings };
+    return { version: 1, ok: !issues.length, count: questions.length, issues, warnings, mappings };
   }
   function matchReport(validation, versions = {}) {
-    return { version: 1, canonicalVersion: 2, ...versions, ok: validation.ok, count: validation.count, issues: validation.issues };
+    return { version: 1, canonicalVersion: 2, ...versions, ok: validation.ok, count: validation.count,
+      issues: validation.issues, warnings: validation.warnings || [],
+      verified: (validation.mappings || []).map(mapping => ({ number: mapping.question.number,
+        id: mapping.question.sourceId || null, basis: mapping.verification?.basis || 'structured',
+        reason: mapping.verification?.reason || '' })) };
   }
-  return { readContent, canonicalize, compare, text, metadata, combine, resolveChoice, signature, validateExam, matchReport, errorCode };
+  function splitPrompt(prompt, limit = 60000) {
+    const blocks = String(prompt).split(/(?=^=== CÂU \d+ ===)/m);
+    const header = blocks.shift();
+    if (!blocks.length) {
+      if (header.length > limit) throw new Error('Prompt vượt giới hạn và không có ranh giới câu để chia.');
+      return [header];
+    }
+    const parts = []; let current = header;
+    for (const block of blocks) {
+      if (header.length + block.length > limit) throw new Error('Một câu vượt giới hạn prompt; cần tăng giới hạn để xuất đầy đủ nguồn.');
+      if (current.length + block.length > limit) { parts.push(current); current = header; }
+      current += block;
+    }
+    if (current !== header) parts.push(current);
+    return parts;
+  }
+  function inspectPromptSources(questions) {
+    const issues = [], warnings = [];
+    for (const q of questions) {
+      const choices = q.choices || [];
+      if (q.answerType !== 'SHORT' && choices.length < Math.max(2, q.expectedChoiceCount || 0)) {
+        issues.push({ number: q.number, id: q.sourceId || null, phase: 'scrape', origin: q.origin || null,
+          status: 'incomplete', code: 'SCRAPE_INCOMPLETE', reason: q.readError || 'thiếu phương án: chưa đọc đủ phương án.', source: [] });
+      }
+      for (const [source, label, images] of [[q.math_content?.question || q.prompt, null, []],
+        ...choices.map(c => [c.math_content || c.text, c.label, c.images || []])]) {
+        const result = toPromptContent(source);
+        for (const diagnostic of result.diagnostics) {
+          if (!result.ok && images.length) continue;
+          const value = { number: q.number, id: q.sourceId || null, label, phase: diagnostic.phase,
+            origin: q.origin || source?.origin || null, format: diagnostic.format || null,
+            status: diagnostic.status, code: result.ok ? 'UNSUPPORTED_SYNTAX' : /render/.test(diagnostic.reason || '') ? 'NOT_RENDERED' : 'SCRAPE_INCOMPLETE',
+            reason: diagnostic.reason, source: result.segments.map(s => ({format:s.format,raw:String(s.raw).slice(0,8192)})) };
+          (result.ok ? warnings : issues).push(value);
+        }
+      }
+    }
+    if (!questions.length) issues.push({ number: null, id: null, phase: 'scrape', status: 'incomplete', code: 'SCRAPE_INCOMPLETE', reason: 'Chưa đọc được đề.', source: [] });
+    return { version: 1, ok: !issues.length, count: questions.length, issues, warnings, mappings: [] };
+  }
+  return { readContent, canonicalize, compare, text, toPromptContent, splitPrompt, inspectPromptSources, metadata, combine, sourceFingerprint, exactSourceMatch, resolveChoice, verifyChoice, signature, validateExam, matchReport, errorCode };
 });

@@ -19,6 +19,10 @@ Extension chạy trực tiếp, không cần Node.js hoặc bước build. Khi c
 
 Prompt có thể kèm ảnh tải xuống. Đính kèm những ảnh đó khi gửi prompt cho AI để xử lý phương án hình vẽ. JSON nên giữ ID câu, ID lựa chọn và nội dung đáp án; chữ A/B/C/D có thể đổi khi đề xáo trộn.
 
+Xuất prompt dùng nguồn văn bản, LaTeX và MathML, độc lập với bộ đối chiếu công thức. LaTeX gốc được giữ nguyên; MathML được chuyển sang LaTeX khi giữ được cấu trúc, hoặc xuất nguyên trong khối `[MathML]`. Cú pháp parser chưa hỗ trợ không làm mất câu hay lựa chọn. Thiếu nguồn hoặc chưa render vẫn phải đọc lại trước khi xuất. Không có bước chụp màn hình/OCR.
+
+Prompt dài được chia theo câu, dùng chung `snapshot_id`. Nếu có nhiều phần, tiện ích lưu các file `OnluyenKit-prompt-N.txt` vào Downloads và sao chép phần đầu. Gửi từng phần cho AI rồi gộp các mảng JSON trước khi nạp. CLI/Gemini xử lý các phần lần lượt. Một câu riêng vượt giới hạn sẽ được báo rõ, không cắt nội dung.
+
 Trước khi tự điền, tiện ích đọc và kiểm tra toàn bộ đề. Nếu API thiếu câu, nó mở từng câu bằng thanh điều hướng rồi trở về câu ban đầu, chưa chọn đáp án. Một lỗi ở bất kỳ câu nào sẽ chặn cả lượt tự điền và giữ database cũ. Trang luyện tập không cho đọc trước đủ đề sẽ được báo rõ thay vì trả lời để mở câu tiếp theo.
 
 Trong cùng tab và bài làm, tạo prompt, nạp database và tự điền dùng chung bản đề đã đọc. Bấm **Bắt đầu Tự Điền** có thể nạp luôn JSON trong ô; không cần nạp riêng trước. JSON đã xác minh không bị kiểm tra toàn đề lần nữa. Chuyển bài, thay nguồn API, số câu hoặc nội dung đang hiển thị làm mất hiệu lực bản lưu. Trước mỗi lần chọn/lưu đáp án, bot vẫn kiểm tra câu trên giao diện.
@@ -44,7 +48,7 @@ Ví dụ định dạng đáp án:
 ]
 ```
 
-Chỉ giữ ID thực tế từ đề; không tự điền các ID ví dụ. Với công thức, extension dùng chung bộ đọc LaTeX/MathML/Unicode với CLI. Nó dừng khi nội dung chưa render, cú pháp chưa hỗ trợ hoặc không khớp duy nhất. Bộ đọc không biến đổi đại số và không hỗ trợ mọi lệnh LaTeX. Chi tiết ở [MATH_CONTENT.md](MATH_CONTENT.md).
+Chỉ giữ ID thực tế từ đề; không tự điền các ID ví dụ. Extension và CLI dùng chung bộ xác minh: nội dung có cấu trúc khớp, hoặc ID/vị trí của snapshot hiện tại có căn cứ. Công thức chưa hỗ trợ vẫn có thể ánh xạ theo snapshot hoặc nguồn nguyên dạng; nội dung bổ sung mâu thuẫn hay không xác minh được sẽ bị chặn. `verification` trong JSON mô tả căn cứ ánh xạ, không phải xác suất AI giải đúng. Không dùng điểm giống chuỗi hay biến đổi đại số. Chi tiết ở [MATH_CONTENT.md](MATH_CONTENT.md).
 
 ## CLI (tùy chọn)
 
@@ -73,6 +77,8 @@ Runner hỏi thông tin đăng nhập khi chạy. Có thể dùng `--gemini-conf
 Cache và log được tạo trong `cache/` và `logs/`. Các thư mục này và cấu hình key được bỏ qua bởi Git. `bulk-tests.txt` trong repo chỉ chứa ví dụ; đừng commit link bài cá nhân khi chỉnh file này.
 
 CLI dùng cùng bộ kiểm tra với extension. Khi chạy gặp lỗi đối chiếu, báo cáo được lưu tại `cache/onluyen-match-report.json`.
+
+CLI chuẩn bị snapshot qua cùng content driver, dùng lại cho prompt, nhập JSON và tự điền. JSON thay đổi chỉ cần đối chiếu trên nguồn đã thu; không quét toàn đề thêm một lần khi nguồn không đổi. Nội dung gốc người dùng gửi được giữ bên cạnh nguồn lựa chọn đã xác minh trong cache.
 
 ## Phát triển
 

@@ -23,7 +23,10 @@ assert.equal(math.validateExam([question], [entry], { expectedTotal: 2 }).ok, fa
 assert.equal(math.validateExam([question], [{ ...entry, loai: 'SHORT' }]).issues[0].code, 'ANSWER_TYPE_CONFLICT');
 assert.ok(math.validateExam([question], [null, entry]).issues.some(i => i.code === 'INVALID_DATABASE_ENTRY'));
 const broken = [{ ...question, choices: [{ label: 'A', text: '$\\unknown{x}$' }, { label: 'B', text: '$x+1)$' }] }];
-assert.ok(math.validateExam(broken, [entry]).issues.length >= 3);
+const brokenReport = math.validateExam(broken, [entry]);
+assert.equal(brokenReport.ok, false);
+assert.equal(brokenReport.warnings.length, 2);
+assert.ok(brokenReport.issues.length > 0);
 const sensitive = { ...entry, apiKey: 'SECRET_KEY', password: 'SECRET_PASSWORD', sessionCookie: 'SECRET_COOKIE' };
 const exported = JSON.stringify(math.matchReport(math.validateExam([question], [{ ...sensitive, noi_dung_dap_an: 'Nội dung sai.' }])));
 assert.ok(!/SECRET_/.test(exported));

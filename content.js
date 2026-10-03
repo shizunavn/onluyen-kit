@@ -190,6 +190,12 @@
     return element ? math.text(element) : '';
   }
 
+  function promptSource(source, number, label) {
+    const result = math.toPromptContent(source);
+    if (!result.ok) throw new Error(`Câu ${number}${label ? `, lựa chọn ${label}` : ''}: ${result.diagnostics[0]?.reason || 'thiếu nguồn nội dung'}.`);
+    return result.text;
+  }
+
   function isVisible(element) {
     if (!(element instanceof Element)) return false;
     const style = getComputedStyle(element);
@@ -359,7 +365,7 @@
       text: math.text(source),
       math_content: math.metadata(source),
       images: uniqueImages(imagesFromHtml(source))
-    }; }).filter(option => option.text || option.images.length);
+    }; });
     const fullPrompt = materialPrompt
       ? cleanText(`[Đoạn tư liệu: ${math.text(materialPrompt)}]\n${prompt}`)
       : prompt;
@@ -380,6 +386,7 @@
     ]);
     return {
       number,
+      origin: 'api',
       stepId: question.stepId,
       sourceId: question.numberQuestion ? String(question.numberQuestion) : null,
       typeAnswer: question.typeAnswer ?? 0,
@@ -442,12 +449,12 @@
           ? cleanText(`[Đoạn tư liệu: ${materialPrompt}]\n${questionPrompt}`)
           : questionPrompt || materialPrompt;
         const regularChoices = [...root.querySelectorAll('.question-option, .select-item')].map((choice, choiceIndex) => ({
-          label: cleanText(choice.querySelector('.question-option-label, .number-item')?.innerText) || String.fromCharCode(65 + choiceIndex),
+          label: (cleanText(choice.querySelector('.question-option-label, .number-item')?.innerText) || String.fromCharCode(65 + choiceIndex)).toUpperCase(),
           text: semanticElementText(choice.querySelector('.question-option-content') || choice.querySelector('label')),
           math_content: math.metadata(choice.querySelector('.question-option-content') || choice.querySelector('label')),
           idOption: choice.dataset.idOption,
           images: choiceImages(choice)
-        })).filter(choice => choice.text || choice.images.length);
+        }));
         const trueFalseChoices = [...root.querySelectorAll('.child-content')]
           .filter(row => row.querySelector('.true-false input[type="radio"]'))
           .map((row, rowIndex) => {
@@ -457,8 +464,7 @@
             const optionText = row.querySelector('.option-text');
             const text = semanticElementText(optionText?.querySelector('.fadein') || optionText);
             return { label, text, math_content: math.metadata(optionText?.querySelector('.fadein') || optionText) };
-          })
-          .filter(choice => choice.text);
+          });
         const shortInput = root.querySelector('.answer-input input[type="text"], input.can-resize-second, input[config-typeaction]');
         const answerType = trueFalseChoices.length ? 'TF' : shortInput ? 'SHORT' : 'MCQ';
         const choices = trueFalseChoices.length ? trueFalseChoices : regularChoices;
@@ -470,12 +476,12 @@
           ...choices.map(choice => `${choice.label}${answerType === 'TF' ? ')' : '.'} ${choice.text}`)
         ].join('\n'));
         const images = uniqueImages(imagesFromRoot(root));
-        return { number, sourceId, answerType, prompt, choices, images, text,
+        return { number, sourceId, answerType, prompt, choices, images, text, origin: 'dom',
           math_content: { version: 1, question: materialPrompt
             ? math.combine('[Đoạn tư liệu:', root.querySelector('.question-text'), ']', root.querySelector('.question-name'))
             : math.metadata(root.querySelector('.question-name') || root.querySelector('.question-text')) } };
       })
-      .filter(question => question.prompt || question.choices.length);
+      .filter(question => question.number);
   }
 
   function getFullExamQuestions() {
@@ -489,6 +495,7 @@
     if (domQuestions.length > 0) {
       return domQuestions.map(q => ({
         number: q.number,
+        origin: q.origin,
         stepId: null,
         sourceId: q.sourceId,
         typeAnswer: q.answerType,
@@ -504,8 +511,9 @@
   }
 
   function hasCompleteChoices(question) {
+    if (!math.toPromptContent(question.math_content?.question || question.prompt).ok) return false;
     return question.answerType === 'SHORT' || (question.choices.length >= Math.max(2, question.expectedChoiceCount || 0)
-      && question.choices.every(choice => choice.text || choice.images?.length));
+      && question.choices.every(choice => math.toPromptContent(choice.math_content || choice.text).ok || choice.images?.length));
   }
 
   function sidebarQuestionNumbers() {
@@ -610,7 +618,10 @@
           checkContext();
           const current = extractStructuredTestQuestions().find(question => question.number === number);
           if (!ready || !completeDomQuestion(current)) {
-            collected.push({ number, sourceId: current?.sourceId || null, answerType: current?.answerType || 'MCQ', prompt: current?.prompt || '', choices: [], readError: `Câu ${number}: chưa đọc đủ phương án.` });
+            collected.push({ ...current, number, sourceId: current?.sourceId || null,
+              answerType: current?.answerType || 'MCQ', prompt: current?.prompt || '',
+              expectedChoiceCount: questions.find(q => q.sourceId && q.sourceId === current?.sourceId)?.expectedChoiceCount,
+              choices: current?.choices || [], readError: `Câu ${number}: chưa đọc đủ phương án.` });
             continue;
           }
           collected.push(current);
@@ -735,14 +746,13 @@
   // 4. TẠO PROMPT AI CHUẨN ĐỊNH DẠNG JSON (MODE 1)
   // ============================================================
   function buildAIPrompt(questions) {
-    for (const question of questions) {
-      if (!hasCompleteChoices(question)) throw new Error(question.readError || `Câu ${question.number}: thiếu phương án, không thể tạo prompt chính xác.`);
-      for (const source of [question.math_content?.question || question.prompt, ...question.choices.map(c => c.math_content || c.text)]) {
-        const result = math.canonicalize(source);
-        if (result.status !== 'ok') throw new Error(`Câu ${question.number}: ${result.reason}. Không thể tạo prompt từ công thức chưa đọc được.`);
-      }
+    const report = math.matchReport(math.inspectPromptSources(questions), { extensionVersion: chrome.runtime.getManifest?.().version || 'development' });
+    lastMatchReport = report;
+    if (!report.ok) throw matchFailure(report);
+    const signature = math.signature(questions);
+    if (!promptSnapshot || promptSnapshot.signature !== signature || promptSnapshot.revision !== examRevision || promptSnapshot.key !== activeExamKey) {
+      promptSnapshot = { id: Array.from(crypto.getRandomValues(new Uint8Array(16)), n => n.toString(16).padStart(2, '0')).join(''), signature, revision: examRevision, key: activeExamKey };
     }
-    promptSnapshot = { id: Array.from(crypto.getRandomValues(new Uint8Array(16)), n => n.toString(16).padStart(2, '0')).join(''), signature: math.signature(questions), revision: examRevision, key: activeExamKey };
     const lines = [
       'Bạn là chuyên gia giải đề thi trắc nghiệm. Hãy giải chính xác 100% các câu hỏi dưới đây.',
       '',
@@ -768,7 +778,7 @@
     for (const q of questions) {
       lines.push(`=== CÂU ${q.number} ===`);
       if (q.sourceId) lines.push(`ID câu: ${q.sourceId}`);
-      lines.push(`Đề bài: ${q.prompt}`);
+      lines.push(`Đề bài: ${promptSource(q.math_content?.question || q.prompt, q.number)}`);
       if (q.answerType === 'TF' || q.typeAnswer === 'TF') {
         lines.push('Loại câu hỏi: Đúng/Sai cho từng ý.');
       } else if (q.answerType === 'SHORT' || q.typeAnswer === 'SHORT') {
@@ -777,7 +787,8 @@
       if (q.choices && q.choices.length > 0) {
         lines.push('Các phương án:');
         for (const ch of q.choices) {
-          lines.push(`${ch.label}${q.answerType === 'TF' || q.typeAnswer === 'TF' ? ')' : '.'} ${ch.text}`);
+          const content = math.toPromptContent(ch.math_content || ch.text);
+          lines.push(`${ch.label}${q.answerType === 'TF' || q.typeAnswer === 'TF' ? ')' : '.'} ${content.ok ? content.text : '[Lựa chọn bằng hình ảnh]'}`);
           if (ch.idOption != null) lines.push(`  id_dap_an: ${JSON.stringify(ch.idOption)}`);
           if (ch.images?.length) {
             if (ch.images.every(image => /^https?:\/\//i.test(image.src))) lines.push(`  anh_dap_an: ${JSON.stringify(ch.images.map(image => image.src))}`);
@@ -1023,9 +1034,20 @@
 
   function recordedMcqAnswerMatches(root, answerEntry) {
     const choices = currentMcqChoices(root);
-    const result = math.resolveChoice(choices, answerEntry.answerContent || answerEntry.originalAnswerText || answerEntry.answerText, answerEntry.answerOptionId, answerEntry.answerImages);
+    const result = verifiedLiveMcqChoice(choices, answerEntry);
     const selected = choices.filter(choice => isMcqOptionSelected(choice.element));
-    return result.status === 'equal' && selected.length === 1 && selected[0] === result.choice;
+    return !!result && selected.length === 1 && selected[0] === result;
+  }
+
+  function verifiedLiveMcqChoice(choices, answerEntry) {
+    const mapping = databaseValidation?.mappings?.find(item => item.question.number === answerEntry.q);
+    if (!mapping?.choice) return null;
+    const expected = mapping.choice;
+    const matches = choices.filter(choice => choice.label === expected.label
+      && (expected.idOption == null || choice.idOption == null || String(choice.idOption) === String(expected.idOption))
+      && math.sourceFingerprint(choice.math_content || choice.text)
+        === math.sourceFingerprint(expected.math_content || expected.text));
+    return matches.length === 1 ? matches[0] : null;
   }
 
   function currentMcqChoices(root) {
@@ -1143,8 +1165,7 @@
   }
 
   function normalizeComparableText(value) {
-    const result = math.canonicalize(value);
-    return result.status === 'ok' ? result.key : null;
+    return math.toPromptContent(value).ok ? math.sourceFingerprint(value) : null;
   }
 
   function answerFromExplanation(root, rowIndex) {
@@ -1202,9 +1223,9 @@
         const source = row.querySelector('.option-text .fadein') || row.querySelector('.option-text');
         const choiceText = semanticElementText(source).replace(/^[a-z]\s*[).:]\s*/i, '');
         statementContents[key] = math.metadata(source);
-        const readable = math.canonicalize(statementContents[key]);
-        if (readable.status !== 'ok') return { error: `ý ${key}: ${readable.reason}` };
-        if (choiceText) choiceTexts[key] = choiceText;
+        const readable = math.toPromptContent(statementContents[key]);
+        if (source && !readable.ok) return { error: `ý ${key}: ${readable.diagnostics[0]?.reason}` };
+        if (choiceText && math.canonicalize(statementContents[key]).status === 'ok') choiceTexts[key] = choiceText;
         const selected = Array.from(row.querySelectorAll('input[type="radio"]')).find(input => input.checked)?.value;
         const check = row.querySelector('.check');
         let value = null;
@@ -1241,6 +1262,7 @@
           id: questionSourceId(root),
           loai: 'SHORT',
           dap_an: shortAnswer,
+          ...(questionContent.segments.length ? { math_content: { version: 1, question: questionContent } } : {}),
           ...(questionText ? { noi_dung_cau_hoi: questionText } : {})
         }
       };
@@ -1258,15 +1280,15 @@
     const answerImages = choiceImages(correctOption).map(image => image.src);
     if (!answerText && !answerImages.length) return { error: 'không đọc được nội dung phương án đúng' };
     const answerContent = math.metadata(correctOption.querySelector('.question-option-content') || correctOption);
-    const readable = math.canonicalize(answerContent);
-    if (readable.status !== 'ok') return { error: readable.reason };
+    const readable = math.toPromptContent(answerContent);
+    if (!readable.ok && !answerImages.length) return { error: readable.diagnostics[0]?.reason };
     return {
       answer: {
         cau: qNumber,
         id: questionSourceId(root),
         loai: 'MCQ',
         dap_an: label,
-        noi_dung_dap_an: answerText,
+        ...(math.canonicalize(answerContent).status === 'ok' && answerText ? { noi_dung_dap_an: answerText } : {}),
         ...(answerImages.length ? { anh_dap_an: answerImages } : {}),
         ...(correctOption.dataset.idOption != null ? { id_dap_an: correctOption.dataset.idOption } : {}),
         math_content: { version: 1, question: questionContent, answer: answerContent },
@@ -1279,7 +1301,7 @@
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       const formulasReady = [...root.querySelectorAll('.question-option-content, .option-text .fadein')]
-        .every(element => math.canonicalize(math.metadata(element)).status !== 'incomplete');
+        .every(element => math.toPromptContent(math.metadata(element)).ok || choiceImages(element).length);
       if (!/Đang tải/i.test(cleanText(root.innerText)) &&
           formulasReady && root.querySelector('.question-option.bg-correct, .question-child .child-content, .hint-content, .answer-input input, input.can-resize-second, input[config-typeaction]')) return true;
       await new Promise(resolve => setTimeout(resolve, 100));
@@ -1322,195 +1344,47 @@
   // ============================================================
   // 7. XỬ LÝ VÀ NẠP DATABASE ĐÁP ÁN
   // ============================================================
-  function entrySourceId(entry) {
-    return String(entry?.id ?? entry?.question_id ?? entry?.sourceId ?? '')
-      .replace(/^#/, '')
-      .trim() || null;
-  }
-
-  function entryQuestionText(entry) {
-    return entry?.noi_dung_cau_hoi ?? entry?.question_text ?? entry?.questionText ?? entry?.prompt ?? null;
-  }
-
-  function entryAnswerText(entry) {
-    return entry?.noi_dung_dap_an_goc
-      ?? entry?.original_answer_text
-      ?? entry?.originalAnswerText
-      ?? entry?.noi_dung_dap_an
-      ?? entry?.answer_text
-      ?? entry?.answerText
-      ?? null;
-  }
-
-  function normalizedAnswerType(value, fallback = 'MCQ') {
-    const type = String(value || fallback).trim().toUpperCase();
-    if (['TF', 'TRUE_FALSE', 'TRUEFALSE'].includes(type)) return 'TF';
-    if (['SHORT', 'SHORT_ANSWER', 'SHORTANSWER'].includes(type)) return 'SHORT';
-    return 'MCQ';
-  }
-
-  function databaseQuestionIndex(questions) {
-    const byId = new Map();
-    const byNumber = new Map();
-    const byPrompt = new Map();
-    for (const question of questions) {
-      if (question.sourceId) byId.set(String(question.sourceId), question);
-      byNumber.set(Number(question.number), question);
-      const promptKey = normalizeComparableText(question.math_content?.question || question.prompt);
-      if (!promptKey) continue;
-      if (!byPrompt.has(promptKey)) byPrompt.set(promptKey, []);
-      byPrompt.get(promptKey).push(question);
-    }
-    return { byId, byNumber, byPrompt };
-  }
-
-  function questionForDatabaseEntry(entry, index) {
-    const sourceId = entrySourceId(entry);
-    if (sourceId && index.byId.has(sourceId)) return index.byId.get(sourceId);
-
-    const promptKey = normalizeComparableText(entry.math_content?.question || entryQuestionText(entry));
-    const promptMatches = promptKey ? index.byPrompt.get(promptKey) : null;
-    if (promptMatches?.length === 1) return promptMatches[0];
-
-    // Khi entry đã có định danh ổn định nhưng câu đó chưa render trong DOM,
-    // không được gán nhầm theo số thứ tự của lần làm khác.
-    if (sourceId || promptKey) return null;
-
-    return null;
-  }
-
-  function contentMap(value) {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
-    return Object.fromEntries(Object.entries(value).map(([key, text]) => [
-      normalizeSubQuestionKey(key, 0),
-      cleanText(text)
-    ]));
-  }
-
-  function enrichDatabaseEntry(entry, question, snapshot = false) {
-    const incomingNumber = Number(entry?.cau ?? entry?.q ?? entry?.number ?? entry?.questionNumber);
-    const qNum = Number(question?.number) || incomingNumber;
-    if (!qNum) return null;
-
-    const sourceId = String(question?.sourceId || entrySourceId(entry) || '').trim() || null;
-    const prompt = cleanText(question?.prompt || entryQuestionText(entry));
-    const type = normalizedAnswerType(entry?.loai ?? entry?.type, question?.answerType);
-    const rawAnswer = entry?.dap_an ?? entry?.a ?? entry?.answer ?? entry?.correctAnswer;
-    const baseExport = { cau: qNum };
-    if (sourceId) baseExport.id = sourceId;
-    baseExport.loai = type;
-    if (prompt) baseExport.noi_dung_cau_hoi = prompt;
-    baseExport.math_content = {
-      version: 1,
-      question: question?.math_content?.question || entry.math_content?.question || math.metadata(prompt)
+  function materializeVerifiedEntry(mapping) {
+    const { question, entry, choice, answer, verification } = mapping;
+    const type = question.answerType;
+    const sourceId = question.sourceId || null;
+    const questionSource = question.math_content?.question || math.metadata(question.prompt);
+    const exported = {
+      cau: question.number, ...(sourceId ? { id: sourceId } : {}), loai: type,
+      dap_an: answer, noi_dung_cau_hoi: question.prompt,
+      ...(entry.snapshot_id ? { snapshot_id: entry.snapshot_id } : {}),
+      ...(entry.noi_dung_cau_hoi && entry.noi_dung_cau_hoi !== question.prompt
+        ? { noi_dung_cau_hoi_goc: entry.noi_dung_cau_hoi } : {}),
+      math_content: { version: 1, question: questionSource },
+      verification
     };
-
-    if (type === 'SHORT') {
-      const value = String(rawAnswer ?? '').trim();
-      if (!value) return null;
-      const exported = { ...baseExport, dap_an: value };
-      return { q: qNum, type, answer: value, sourceId, answerText: null, questionText: prompt, exported };
+    if (type === 'SHORT') return { q: question.number, type, answer, sourceId,
+      answerText: null, questionText: question.prompt, verification, exported };
+    if (type === 'TF') {
+      const choiceTexts = Object.fromEntries(question.choices.map(c => [c.label, c.text]));
+      const statements = Object.fromEntries(question.choices.map(c => [c.label, c.math_content || math.metadata(c.text)]));
+      exported.noi_dung_cac_y = Object.fromEntries(question.choices.filter(c => math.canonicalize(c.math_content || c.text).status === 'ok').map(c => [c.label, c.text]));
+      if (entry.noi_dung_cac_y) exported.noi_dung_cac_y_goc = entry.noi_dung_cac_y;
+      exported.math_content.statements = statements;
+      const ids = Object.fromEntries(question.choices.filter(c => c.idOption != null).map(c => [c.label, c.idOption]));
+      if (Object.keys(ids).length) exported.id_cac_y = ids;
+      return { q: question.number, type, answer, sourceId, answerText: null,
+        questionText: question.prompt, choiceTexts, statementContents: statements,
+        verification, exported };
     }
-
-    if (type === 'TF' && rawAnswer && typeof rawAnswer === 'object') {
-      const choices = question?.choices || [];
-      const savedContents = contentMap(
-        entry?.noi_dung_cac_y ?? entry?.statement_texts ?? entry?.choiceTexts ?? entry?.noi_dung_dap_an
-      );
-      const remapped = {};
-      const currentContents = {};
-      const currentIds = {};
-
-      for (let index = 0; index < choices.length; index++) {
-        const choice = choices[index];
-        const currentKey = normalizeSubQuestionKey(choice.label, index);
-        const currentText = cleanText(choice.text);
-        const readable = math.canonicalize(choice.math_content || currentText);
-        if (readable.status !== 'ok') throw new Error(`Câu ${qNum}, ý ${currentKey}: ${readable.reason}`);
-        currentContents[currentKey] = currentText;
-        if (choice.idOption !== undefined && choice.idOption !== null) currentIds[currentKey] = choice.idOption;
-
-        const savedKeys = [...new Set([...Object.keys(savedContents), ...Object.keys(entry.math_content?.statements || {})])];
-        const matches = savedKeys.filter(key =>
-          math.compare(entry.math_content?.statements?.[key] || savedContents[key], choice.math_content || currentText).status === 'equal'
-        );
-        let savedKey = matches.length === 1 ? matches[0] : null;
-        if (snapshot && !Object.keys(savedContents).length && !Object.keys(entry.math_content?.statements || {}).length
-            && Object.prototype.hasOwnProperty.call(rawAnswer, currentKey)) savedKey = currentKey;
-        if (!savedKey) throw new Error(`Câu ${qNum}, ý ${currentKey}: không khớp duy nhất nội dung Đúng/Sai.`);
-        const value = rawAnswer[savedKey];
-        if (truthValue(value) !== null) remapped[currentKey] = truthValue(value) ? 'Đúng' : 'Sai';
-      }
-      if (choices.length && Object.keys(remapped).length !== choices.length) throw new Error(`Câu ${qNum}: thiếu đáp án Đúng/Sai hợp lệ.`);
-
-      if (!choices.length) {
-        for (const [key, value] of Object.entries(rawAnswer)) {
-          if (truthValue(value) !== null) remapped[normalizeSubQuestionKey(key, 0)] = truthValue(value) ? 'Đúng' : 'Sai';
-        }
-      }
-      if (!Object.keys(remapped).length) return null;
-
-      const exported = { ...baseExport, dap_an: remapped };
-      exported.math_content.statements = choices.length
-        ? Object.fromEntries(choices.map((c, i) => [normalizeSubQuestionKey(c.label, i), c.math_content || math.metadata(c.text)]))
-        : entry.math_content?.statements || Object.fromEntries(Object.entries(savedContents).map(([k, v]) => [k, math.metadata(v)]));
-      if (Object.keys(currentContents).length) exported.noi_dung_cac_y = currentContents;
-      if (Object.keys(currentIds).length) exported.id_cac_y = currentIds;
-      return {
-        q: qNum,
-        type,
-        answer: remapped,
-        sourceId,
-        answerText: null,
-        questionText: prompt,
-        choiceTexts: choices.length ? currentContents : savedContents,
-        statementContents: exported.math_content.statements,
-        exported
-      };
-    }
-
-    const choices = question?.choices || [];
-    const savedAnswerText = cleanText(entryAnswerText(entry));
-    const savedOptionId = entry?.id_dap_an ?? entry?.answer_id ?? entry?.answerId;
-    const savedImages = entry.anh_dap_an ?? entry.answer_images;
-    const savedContent = entry.math_content?.answer || savedAnswerText || null;
-    const resolution = math.resolveChoice(choices, savedContent, savedOptionId, savedImages);
-    let choice = resolution.choice;
-    if (choices.length && (savedContent || savedImages || savedOptionId != null) && !choice) throw new Error(`Câu ${qNum}: ${resolution.reason}. Nguồn: ${savedAnswerText}`);
-    const incomingLetter = String(rawAnswer || '').trim().toUpperCase();
-    if (!choice && !savedContent && savedImages == null && savedOptionId == null && question && snapshot && /^[A-Z]$/.test(incomingLetter)) {
-      choice = choices.find(item => String(item.label).trim().toUpperCase() === incomingLetter) || null;
-    }
-    if (choice) {
-      const readable = math.canonicalize(choice.math_content || choice.text);
-      if (readable.status !== 'ok') throw new Error(`Câu ${qNum}: ${readable.reason}`);
-    }
-    const currentLetter = String(choice?.label || incomingLetter).trim().toUpperCase();
-    if (!/^[A-Z]$/.test(currentLetter)) return null;
-    const answerText = cleanText(choice?.text || savedAnswerText) || null;
-    const exported = { ...baseExport, dap_an: currentLetter };
-    const answerImages = choice?.images?.length ? choice.images.map(image => image.src) : savedImages;
-    if (answerImages != null) exported.anh_dap_an = answerImages;
-    exported.math_content.answer = choice?.math_content || entry.math_content?.answer || math.metadata(answerText || '', 'inferred');
-    if (answerText) exported.noi_dung_dap_an = answerText;
-    if (savedAnswerText && currentLetter !== incomingLetter) {
-      exported.noi_dung_dap_an_goc = savedAnswerText;
-    }
-    if (choice?.idOption !== undefined && choice.idOption !== null) exported.id_dap_an = choice.idOption;
-    return {
-      q: qNum,
-      type: 'MCQ',
-      answer: currentLetter,
-      sourceId,
-      answerText,
-      originalAnswerText: savedAnswerText || answerText,
-      answerContent: exported.math_content.answer,
-      answerOptionId: savedOptionId ?? choice?.idOption,
-      answerImages,
-      snapshotBound: snapshot && !!question && !savedContent,
-      questionText: prompt,
-      exported
-    };
+    const originalAnswerText = entry.noi_dung_dap_an_goc || entry.noi_dung_dap_an || entry.answer_text || entry.a_content || null;
+    const answerImages = choice.images?.length ? choice.images.map(image => image.src) : null;
+    const answerContent = choice.math_content || math.metadata(choice.text);
+    exported.math_content.answer = answerContent;
+    if (entry.math_content?.answer) exported.math_content.supplied_answer = entry.math_content.supplied_answer || entry.math_content.answer;
+    if (originalAnswerText) exported.noi_dung_dap_an = originalAnswerText;
+    else if (verification.basis === 'structured' && choice.text) exported.noi_dung_dap_an = choice.text;
+    if (answerImages) exported.anh_dap_an = answerImages;
+    if (choice.idOption != null) exported.id_dap_an = choice.idOption;
+    return { q: question.number, type, answer, sourceId, answerText: choice.text || null,
+      originalAnswerText, answerContent, answerImages, answerOptionId: choice.idOption,
+      snapshotBound: verification.basis === 'snapshot', questionText: question.prompt,
+      verification, exported };
   }
 
   function databaseExportJson() {
@@ -1536,12 +1410,11 @@
     return items;
   }
 
-  function parseAndLoadDatabase(inputJson, snapshot = false, validatedQuestions = null) {
+  function parseAndLoadDatabase(inputJson, mappings = null) {
     const items = databaseItems(inputJson);
 
-    const questions = items.length ? validatedQuestions || getFullExamQuestions() : [];
-    const questionIndex = databaseQuestionIndex(questions);
-    const prepared = items.map(entry => enrichDatabaseEntry(entry, questionForDatabaseEntry(entry, questionIndex), snapshot)).filter(Boolean);
+    if (items.length && !mappings) throw new Error("Database chưa được xác minh toàn bộ.");
+    const prepared = (mappings || []).map(materializeVerifiedEntry);
     const seenIds = new Set();
     for (const entry of prepared) {
       if (entry.sourceId && seenIds.has(entry.sourceId)) throw new Error(`Database có nhiều đáp án cho ID câu ${entry.sourceId}.`);
@@ -1623,27 +1496,17 @@
       lastMatchReport = math.matchReport(validation, { extensionVersion: chrome.runtime.getManifest?.().version || 'development' });
       if (!validation.ok) throw matchFailure(lastMatchReport);
       if (commit) {
-        const verified = validation.mappings.map(({ question, entry, choice, answer }) => {
-          entry = { ...entry, cau: question.number, ...(question.sourceId ? { id: question.sourceId } : {}),
-            noi_dung_cau_hoi: question.prompt, math_content: { ...entry.math_content, version: 1, question: question.math_content?.question || math.metadata(question.prompt) } };
-          if (question.answerType === 'TF') return { ...entry, dap_an: answer,
-            noi_dung_cac_y: Object.fromEntries(question.choices.map(c => [c.label, c.text])),
-            math_content: { ...entry.math_content, version: 1, statements: Object.fromEntries(question.choices.map(c => [c.label, c.math_content || math.metadata(c.text)])) } };
-          if (choice) return { ...entry, dap_an: choice.label, noi_dung_dap_an: choice.text,
-            ...(choice.idOption != null ? { id_dap_an: choice.idOption } : {}),
-            ...(choice.images?.length ? { anh_dap_an: choice.images.map(i => i.src) } : {}),
-            math_content: { ...entry.math_content, version: 1, answer: choice.math_content || math.metadata(choice.text) } };
-          return entry;
-        });
+        const verified = validation.mappings.map(mapping => materializeVerifiedEntry(mapping).exported);
         if (validationCancelled || revision !== examRevision || key !== examStorageKey()) throw new Error('Đã hủy kiểm tra hoặc chuyển bài.');
         const previous = { data: new Map(window.__ONLUYEN_DATABASE__), ids: new Map(window.__ONLUYEN_DATABASE_BY_ID__), prompts: new Map(window.__ONLUYEN_DATABASE_BY_PROMPT__), exported: window.__ONLUYEN_DATABASE_EXPORT__, staged: stagedDatabaseInput, validation: databaseValidation, json: stagedDatabaseInput || databaseExportJson() };
-        parseAndLoadDatabase(verified, false, questions);
+        parseAndLoadDatabase(verified, validation.mappings);
         try {
           await persistExamDatabase(key);
           if (validationCancelled || revision !== examRevision || key !== examStorageKey()) throw new Error('Đã hủy kiểm tra hoặc chuyển bài trong khi lưu.');
           if (sourceContext !== examSourceContext()) throw Object.assign(new Error('Nguồn đề đã thay đổi trong khi lưu. Hãy kiểm tra lại.'), { code: 'PAGE_CHANGED' });
           stagedDatabaseInput = null;
           databaseValidation = { revision, key, signature: math.signature(questions), questions,
+            mappings: validation.mappings,
             sourceContext, inputKey,
             exportKey: JSON.stringify(databaseItems(databaseExportJson())), report: lastMatchReport };
         } catch (error) {
@@ -1762,7 +1625,7 @@
       if (!currentQuestionMatches(expectedNumber)) return false;
       const root = getCurrentQuestionRoot();
       const formulaElements = [...root.querySelectorAll('.question-option-content, .select-item label, .option-text .fadein')];
-      if (formulaElements.some(element => math.canonicalize(math.metadata(element)).status === 'incomplete')) return false;
+      if (formulaElements.some(element => !math.toPromptContent(math.metadata(element)).ok && !choiceImages(element).length)) return false;
       return [...root.querySelectorAll('.question-option, .select-item, .true-false, .answer-input input[type="text"], input.can-resize-second, input[config-typeaction]')].some(isVisible);
     }, timeoutMs, 80);
   }
@@ -1846,7 +1709,11 @@
     for (let index = 0; index < entries.length; index++) {
       const [key, value] = entries[index];
       const saved = answerEntry.statementContents?.[key] || answerEntry.choiceTexts?.[key];
-      const candidates = saved ? rows.filter(row => math.compare(saved, math.metadata(row.querySelector('.option-text .fadein') || row.querySelector('.option-text'))).status === 'equal') : [rowsByKey.get(normalizeSubQuestionKey(key, index))];
+      const row = rowsByKey.get(normalizeSubQuestionKey(key, index));
+      // The preflight already mapped every statement to the current labels.
+      // Recheck that exact source instead of rematching duplicate statements.
+      const current = row && math.metadata(row.querySelector('.option-text .fadein') || row.querySelector('.option-text'));
+      const candidates = row && (!saved || math.sourceFingerprint(saved) === math.sourceFingerprint(current)) ? [row] : [];
       if (candidates.length !== 1 || !candidates[0] || used.has(candidates[0])) throw new Error(`Câu ${qNum}, ý ${key}: không khớp duy nhất công thức Đúng/Sai.`);
       const expected = truthValue(value);
       const radio = [...candidates[0].querySelectorAll('input[type="radio"]')].find(input => truthValue(input.value) === expected);
@@ -1868,29 +1735,12 @@
 
     // 1. Nếu là Trắc nghiệm đơn MCQ (A, B, C, D)
     if (typeof ans === 'string' && /^[A-D]$/i.test(ans.trim())) {
-      const targetLetter = ans.trim().toUpperCase();
-      const targetIndex = targetLetter.charCodeAt(0) - 65; // A->0, B->1, C->2, D->3
-
       const optionElements = mcqOptionElements(currentRoot);
       if (optionElements.length > 0) {
-        const saved = answerEntry.answerContent || answerEntry.originalAnswerText || answerEntry.answerText;
-        if (saved || answerEntry.answerImages || answerEntry.answerOptionId != null) {
-          const result = math.resolveChoice(currentMcqChoices(currentRoot), saved, answerEntry.answerOptionId, answerEntry.answerImages);
-          if (result.status !== 'equal') throw new Error(`Câu ${qNum}: ${result.reason}. Nguồn: ${answerEntry.originalAnswerText || answerEntry.answerText}`);
-          return activateMcqOption(result.choice.element);
-        }
-        if (!answerEntry.snapshotBound) throw new Error(`Câu ${qNum}: cache chỉ có chữ cái, chưa xác minh được; hãy lấy lại đáp án từ đề/History.`);
-
-        // Ưu tiên khớp theo label chữ cái
-        let matched = optionElements.find((option, index) => mcqOptionLabel(option, index) === targetLetter);
-        // Fallback theo index
-        if (!matched && optionElements[targetIndex]) {
-          matched = optionElements[targetIndex];
-        }
-
-        if (matched) {
-          return activateMcqOption(matched);
-        }
+        assertValidatedQuestion(qNum);
+        const verified = verifiedLiveMcqChoice(currentMcqChoices(currentRoot), answerEntry);
+        if (!verified) throw new Error(`Câu ${qNum}: nguồn/lựa chọn không còn khớp bản đã xác minh.`);
+        return activateMcqOption(verified.element);
       }
     }
 
@@ -2011,6 +1861,7 @@
 
         const answerButton = findCompletionButton(answerEntry);
         if (!answerButton) throw new Error(`Không còn tìm thấy nút hoàn thành câu ${i}.`);
+        assertValidatedQuestion(i);
         const skippedRecordedAnswer = /^bỏ qua$/i.test(cleanText(answerButton.innerText));
         const completionLabel = skippedRecordedAnswer ? 'Bỏ qua' : 'Trả lời';
         const identityBeforeSubmit = currentQuestionIdentity();
@@ -2138,15 +1989,17 @@
     }
 
     // 3. TẠO PROMPT AI (CHẾ ĐỘ 1)
-    if (message?.action === 'OL_GET_AI_PROMPT') {
+    if (message?.action === 'OL_GET_AI_PROMPT' || message?.action === 'OL_PREPARE_EXAM') {
       (async () => {
         try {
           const questions = await getCompleteExamQuestions();
           if (!questions.length) throw new Error('Không tìm thấy câu hỏi nào trên trang. Hãy tải lại trang F5.');
           const prompt = buildAIPrompt(questions);
           const images = promptImageFiles(questions);
-          sendResponse({ ok: true, prompt, count: questions.length, imageCount: images.length, images });
-        } catch (error) { sendResponse({ ok: false, error: error.message }); }
+          const parts = math.splitPrompt(prompt);
+          sendResponse({ ok: true, prompt, parts, report: lastMatchReport, count: questions.length, imageCount: images.length, images,
+            ...(message.action === 'OL_PREPARE_EXAM' ? { questions, snapshot: { id: promptSnapshot.id, signature: promptSnapshot.signature } } : {}) });
+        } catch (error) { sendResponse({ ok: false, error: error.message, report: error.report }); }
       })();
       return true;
     }
@@ -2164,11 +2017,16 @@
           if (imagePayload.failures.length) {
             throw new Error(`Không đọc được ${imagePayload.failures.length}/${imagePayload.files.length} ảnh: ${imagePayload.failures.slice(0, 2).join('; ')}`);
           }
-          const aiResult = await solveWithGeminiPool(prompt, imagePayload.parts);
+          const answers = []; let aiResult;
+          for (const part of math.splitPrompt(prompt)) {
+            aiResult = await solveWithGeminiPool(part, imagePayload.parts);
+            answers.push(...databaseItems(aiResult.text));
+            if (solveRevision !== examRevision || solveKey !== examStorageKey()) throw new Error('Đã chuyển bài trong khi giải đề.');
+          }
           if (solveRevision !== examRevision || solveKey !== examStorageKey()) {
             throw new Error('Đã chuyển sang bài khác. Hãy giải lại đề hiện tại.');
           }
-          const validated = await validateDatabase(aiResult.text, true);
+          const validated = await validateDatabase(answers, true);
           const count = validated.count;
           const normalizedJson = databaseExportJson();
           sendResponse({

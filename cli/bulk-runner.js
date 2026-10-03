@@ -274,7 +274,7 @@ function normalizeApiQuestion(question, fallbackNumber, materialPrompt = '', mat
     idOption: option.idOption,
     math_content: math.metadata(source),
     images: imageSourcesFromHtml(source)
-  }; }).filter(choice => choice.text || choice.images.length);
+  }; });
   const number = Number(question.stepIndex) >= 0 ? Number(question.stepIndex) + 1 : fallbackNumber;
   const images = imageSourcesFromHtml(
     materialImages.map(image => `<img src="${image.src}">`),
@@ -288,6 +288,7 @@ function normalizeApiQuestion(question, fallbackNumber, materialPrompt = '', mat
   );
   return {
     number,
+    origin: 'api',
     sourceId: question.numberQuestion ? String(question.numberQuestion) : null,
     answerType: isTrueFalse ? 'TF' : isShortAnswer ? 'SHORT' : 'MCQ',
     prompt: materialPrompt ? `[Đoạn tư liệu: ${math.text(materialPrompt)}]\n${prompt}` : prompt,
@@ -316,18 +317,14 @@ function parseApiQuestions(rawItems) {
       if (normalized) list.push(normalized);
     }
   }
-  return list.filter(question => question.prompt && (question.answerType === 'SHORT' || question.choices.length)).sort((a, b) => a.number - b.number);
+  return list.sort((a, b) => a.number - b.number);
 }
 
-function buildPrompt(questions) {
-  for (const question of questions) {
-    if (question.answerType !== 'SHORT' && question.choices.length < Math.max(2, question.expectedChoiceCount || 0)) throw new Error(`Câu ${question.number}: thiếu phương án, không thể tạo prompt chính xác.`);
-    for (const source of [question.math_content?.question || question.prompt, ...question.choices.map(c => c.math_content || c.text)]) {
-      const result = math.canonicalize(source);
-      if (result.status !== 'ok') throw new Error(`Câu ${question.number}: ${result.reason}. Không thể tạo prompt từ công thức chưa đọc được.`);
-    }
-  }
-  const snapshot = { id: crypto.randomUUID(), signature: math.signature(questions) };
+function buildPrompt(questions, preparedSnapshot = null) {
+  const inspection = math.inspectPromptSources(questions);
+  if (!inspection.ok) throw Object.assign(new Error(inspection.issues.map(i => `Câu ${i.number}: ${i.reason}`).join('\n')),
+    { report: math.matchReport(inspection, { cliVersion: require('../package.json').version }) });
+  const snapshot = preparedSnapshot || { id: crypto.randomUUID(), signature: math.signature(questions), questions };
   promptSnapshots.set(questions, snapshot);
   const lines = [
     'Giải chính xác các câu trắc nghiệm sau.',
@@ -343,11 +340,12 @@ function buildPrompt(questions) {
   for (const question of questions) {
     lines.push(`=== CÂU ${question.number} ===`);
     if (question.sourceId) lines.push(`ID câu: ${question.sourceId}`);
-    lines.push(question.prompt);
+    lines.push(math.toPromptContent(question.math_content?.question || question.prompt).text);
     if (question.answerType === 'TF') lines.push('Loại: Đúng/Sai cho từng ý.');
     if (question.answerType === 'SHORT') lines.push('Loại: Trả lời ngắn. Ghi chính xác nội dung cần nhập vào ô đáp án.');
     for (const choice of question.choices) {
-      lines.push(`${choice.label}${question.answerType === 'TF' ? ')' : '.'} ${choice.text}`);
+      const content = math.toPromptContent(choice.math_content || choice.text);
+      lines.push(`${choice.label}${question.answerType === 'TF' ? ')' : '.'} ${content.ok ? content.text : '[Lựa chọn bằng hình ảnh]'}`);
       if (choice.idOption != null) lines.push(`  id_dap_an: ${JSON.stringify(choice.idOption)}`);
       if (choice.images?.length) {
         if (choice.images.every(image => /^https?:\/\//i.test(image.src))) lines.push(`  anh_dap_an: ${JSON.stringify(choice.images.map(image => image.src))}`);
@@ -365,39 +363,40 @@ function buildPrompt(questions) {
 
 function validateAndEnrichAnswers(rawAnswers, questions) {
   const snapshot = promptSnapshots.get(questions);
-  const validation = math.validateExam(questions, rawAnswers, { snapshotId: snapshot?.id, snapshotSignature: snapshot?.signature });
+  const validation = math.validateExam(questions, rawAnswers, { snapshotId: snapshot?.id, snapshotSignature: snapshot?.signature, snapshotQuestions: snapshot?.questions });
   if (!validation.ok) throw Object.assign(new Error(validation.issues.map(i => `Câu ${i.number ?? '?'}: ${i.reason}`).join('\n')), { report: math.matchReport(validation, { cliVersion: require('../package.json').version }) });
-  return validation.mappings.map(({ question, entry, choice: verifiedChoice, answer }) => {
+  return validation.mappings.map(({ question, entry, choice: verifiedChoice, answer, verification }) => {
+    const proof = { verification, ...(entry.snapshot_id ? { snapshot_id: entry.snapshot_id } : {}),
+      ...(entry.noi_dung_cau_hoi && entry.noi_dung_cau_hoi !== question.prompt ? { noi_dung_cau_hoi_goc: entry.noi_dung_cau_hoi } : {}) };
     if (question.answerType === 'SHORT') {
       const value = String(answer ?? '').trim();
       if (!value) throw new Error(`Đáp án trả lời ngắn câu ${question.number} không hợp lệ.`);
       return {
+        ...proof,
         cau: question.number,
         id: question.sourceId,
         loai: 'SHORT',
         dap_an: value,
+        math_content: { version: 1, question: question.math_content?.question || math.metadata(question.prompt) },
         noi_dung_cau_hoi: question.prompt
       };
     }
     if (question.answerType === 'MCQ') {
       const letter = String(answer || '').trim().toUpperCase();
       if (!/^[A-D]$/.test(letter)) throw new Error(`Đáp án MCQ câu ${question.number} không hợp lệ.`);
-      const suppliedImages = entry.anh_dap_an ?? entry.answer_images;
-      const suppliedId = entry.id_dap_an ?? entry.answer_id ?? entry.answerId;
-      const suppliedText = entry.math_content?.answer || entry.noi_dung_dap_an;
-      const verified = suppliedImages != null || suppliedId != null || suppliedText
-        ? math.resolveChoice(question.choices, suppliedText, suppliedId, suppliedImages) : null;
-      if (verified && verified.status !== 'equal') throw new Error(`Câu ${question.number}: ${verified.reason}.`);
       const choice = verifiedChoice;
       if (!choice) throw new Error(`Không tìm thấy nội dung đáp án ${letter} của câu ${question.number}.`);
       return {
+        ...proof,
         cau: question.number,
         id: question.sourceId,
         loai: 'MCQ',
         dap_an: choice.label.toUpperCase(),
-        noi_dung_dap_an: choice.text,
+        ...(entry.noi_dung_dap_an ? { noi_dung_dap_an: entry.noi_dung_dap_an }
+          : verification.basis === 'structured' ? { noi_dung_dap_an: choice.text } : {}),
         ...(choice.images?.length ? { anh_dap_an: choice.images.map(image => image.src) } : {}),
-        math_content: { version: 1, question: question.math_content?.question || math.metadata(question.prompt), answer: choice.math_content || math.metadata(choice.text) },
+        math_content: { version: 1, question: question.math_content?.question || math.metadata(question.prompt), answer: choice.math_content || math.metadata(choice.text),
+          ...(entry.math_content?.answer ? { supplied_answer: entry.math_content.supplied_answer || entry.math_content.answer } : {}) },
         noi_dung_cau_hoi: question.prompt,
         ...(choice.idOption !== undefined && choice.idOption !== null ? { id_dap_an: choice.idOption } : {})
       };
@@ -412,17 +411,19 @@ function validateAndEnrichAnswers(rawAnswers, questions) {
       }
       normalized[choice.label] = ['đúng', 'dung', 'true'].includes(text) ? 'Đúng' : 'Sai';
     }
-    const choiceTexts = Object.fromEntries(question.choices.map(choice => [choice.label, choice.text]));
+    const choiceTexts = Object.fromEntries(question.choices.filter(c => math.canonicalize(c.math_content || c.text).status === 'ok').map(choice => [choice.label, choice.text]));
     const choiceIds = Object.fromEntries(question.choices
       .filter(choice => choice.idOption !== undefined && choice.idOption !== null)
       .map(choice => [choice.label, choice.idOption]));
     return {
+      ...proof,
       cau: question.number,
       id: question.sourceId,
       loai: 'TF',
       dap_an: normalized,
       noi_dung_cau_hoi: question.prompt,
       noi_dung_cac_y: choiceTexts,
+      ...(entry.noi_dung_cac_y ? { noi_dung_cac_y_goc: entry.noi_dung_cac_y } : {}),
       math_content: { version: 1, question: question.math_content?.question || math.metadata(question.prompt), statements: Object.fromEntries(question.choices.map(c => [c.label, c.math_content || math.metadata(c.text)])) },
       ...(Object.keys(choiceIds).length ? { id_cac_y: choiceIds } : {})
     };
@@ -437,13 +438,6 @@ function questionText(entry) {
   return entry?.noi_dung_cau_hoi ?? entry?.question_text ?? entry?.questionText ?? entry?.prompt ?? null;
 }
 
-function normalizedTruth(value) {
-  const text = String(value ?? '').trim().toLocaleLowerCase('vi');
-  if (['đúng', 'dung', 'true', '1'].includes(text)) return 'Đúng';
-  if (['sai', 'false', '0'].includes(text)) return 'Sai';
-  return null;
-}
-
 function matchBankAnswers(questions, bankEntries) {
   const byId = new Map();
   for (const entry of bankEntries) {
@@ -451,7 +445,7 @@ function matchBankAnswers(questions, bankEntries) {
     if (id == null) continue;
     const key = String(id).replace(/^#/, '');
     const entries = byId.get(key) || [];
-    const fingerprint = e => JSON.stringify([comparable(e.math_content?.question || questionText(e)), comparable(answerText(e)),
+    const fingerprint = e => JSON.stringify([math.sourceFingerprint(e.math_content?.question || questionText(e)), math.sourceFingerprint(answerText(e)),
       e.id_dap_an ?? null, e.anh_dap_an ?? null,
       answerText(e) ? null : e.dap_an ?? e.answer, e.math_content?.statements ?? e.noi_dung_cac_y ?? null]);
     if (!entries.some(e => fingerprint(e) === fingerprint(entry))) entries.push(entry);
@@ -459,7 +453,7 @@ function matchBankAnswers(questions, bankEntries) {
   }
   const byPrompt = new Map();
   for (const entry of bankEntries) {
-    const key = comparable(entry.math_content?.question || questionText(entry));
+    const key = math.sourceFingerprint(entry.math_content?.question || questionText(entry));
     if (!key) continue;
     if (!byPrompt.has(key)) byPrompt.set(key, []);
     byPrompt.get(key).push(entry);
@@ -468,74 +462,18 @@ function matchBankAnswers(questions, bankEntries) {
   const missing = [];
 
   for (const question of questions) {
-    const promptMatches = byPrompt.get(comparable(question.math_content?.question || question.prompt)) || [];
+    const promptMatches = byPrompt.get(math.sourceFingerprint(question.math_content?.question || question.prompt)) || [];
     const idMatches = question.sourceId ? byId.get(question.sourceId) || [] : [];
     if (idMatches.length > 1) {
       const validation = math.validateExam([question], idMatches);
       throw Object.assign(new Error(`Câu ${question.number}: nhiều đáp án cache cho cùng ID.`), { report: math.matchReport(validation) });
     }
     const entry = idMatches[0] || (promptMatches.length === 1 ? promptMatches[0] : null);
-    const type = String(entry?.loai ?? entry?.type ?? question.answerType).toUpperCase();
     if (!entry) {
       missing.push(question);
       continue;
     }
-    const validation = math.validateExam([question], [entry]);
-    if (!validation.ok) throw Object.assign(new Error(validation.issues.map(i => `Câu ${i.number ?? '?'}: ${i.reason}`).join('\n')), { report: math.matchReport(validation) });
-    if (type === 'TF' && typeof (entry.dap_an ?? entry.answer) === 'object') {
-      const rawAnswer = entry.dap_an ?? entry.answer;
-      const remapped = validation.mappings[0].answer;
-      if (question.choices.length && Object.keys(remapped).length !== question.choices.length) {
-        missing.push(question);
-        continue;
-      }
-      const choiceTexts = Object.fromEntries(question.choices.map(choice => [choice.label, choice.text]));
-      const choiceIds = Object.fromEntries(question.choices
-        .filter(choice => choice.idOption !== undefined && choice.idOption !== null)
-        .map(choice => [choice.label, choice.idOption]));
-      matched.push({
-        cau: question.number,
-        id: question.sourceId,
-        loai: 'TF',
-        dap_an: question.choices.length ? remapped : rawAnswer,
-        noi_dung_cau_hoi: question.prompt,
-        noi_dung_cac_y: choiceTexts,
-        math_content: { version: 1, question: question.math_content?.question || math.metadata(question.prompt), statements: Object.fromEntries(question.choices.map(c => [c.label, c.math_content || math.metadata(c.text)])) },
-        ...(Object.keys(choiceIds).length ? { id_cac_y: choiceIds } : {})
-      });
-      continue;
-    }
-    if (type === 'SHORT' && String(entry.dap_an ?? entry.answer ?? '').trim()) {
-      matched.push({
-        cau: question.number,
-        id: question.sourceId,
-        loai: 'SHORT',
-        dap_an: String(entry.dap_an ?? entry.answer).trim(),
-        noi_dung_cau_hoi: question.prompt
-      });
-      continue;
-    }
-    const savedText = answerText(entry);
-    const savedOptionId = entry.id_dap_an ?? entry.answer_id ?? entry.answerId;
-    const savedImages = entry.anh_dap_an ?? entry.answer_images;
-    const resolution = math.resolveChoice(question.choices, savedText, savedOptionId, savedImages);
-    const currentChoice = resolution.choice;
-    if (!currentChoice && (savedText || savedImages)) throw new Error(`Câu ${question.number}: ${resolution.reason}.`);
-    if (!currentChoice) {
-      missing.push(question);
-      continue;
-    }
-    matched.push({
-      cau: question.number,
-      id: question.sourceId,
-      loai: 'MCQ',
-      dap_an: currentChoice.label.toUpperCase(),
-      noi_dung_dap_an: currentChoice.text,
-      ...(currentChoice.images?.length ? { anh_dap_an: currentChoice.images.map(image => image.src) } : {}),
-      math_content: { version: 1, question: question.math_content?.question || math.metadata(question.prompt), answer: currentChoice.math_content || math.metadata(currentChoice.text) },
-      noi_dung_cau_hoi: question.prompt,
-      ...(currentChoice.idOption !== undefined && currentChoice.idOption !== null ? { id_dap_an: currentChoice.idOption } : {})
-    });
+    matched.push(...validateAndEnrichAnswers([entry], [question]));
   }
   return { matched, missing };
 }
@@ -924,7 +862,7 @@ async function collectDomQuestion(page) {
       answerType,
       prompt,
       math_content: { version: 1, question: math.metadata(promptElement) },
-      choices: choices.filter(choice => choice.text || choice.images?.length),
+      choices,
       images
     };
   });
@@ -1027,6 +965,14 @@ async function sendToContent(page, message) {
   return page.evaluate(payload => new Promise(resolve => {
     window.__CLI_CONTENT_LISTENER__(payload, {}, resolve);
   }), message);
+}
+
+async function prepareExam(page) {
+  const raw = await page.evaluate(() => window.__ONLUYEN_CACHED_QUESTIONS__ || []);
+  await installContentDriver(page, raw);
+  const prepared = await sendToContent(page, { action: 'OL_PREPARE_EXAM' });
+  if (!prepared?.ok) throw Object.assign(new Error(prepared?.error || 'Không đọc đủ toàn bộ đề.'), { report: prepared?.report });
+  return prepared;
 }
 
 async function runAnswers(page, answers, totalQuestions) {
@@ -1178,7 +1124,12 @@ async function processTest(page, url, context) {
 
   await enterTest(page);
 
-  const questions = await getQuestions(page);
+  // The browser driver owns the complete source snapshot. Prompt generation,
+  // JSON import and execution all reuse it, including DOM-only questions.
+  const prepared = await prepareExam(page);
+  const questions = prepared.questions;
+  const snapshot = { ...prepared.snapshot, questions };
+  promptSnapshots.set(questions, snapshot);
   if (!questions.length) throw new Error('Không trích xuất được câu hỏi nào.');
   console.log(`  Đã đọc ${questions.length} câu.`);
 
@@ -1189,6 +1140,7 @@ async function processTest(page, url, context) {
     context.pasteAsked.add(testId || url);
     const pasted = await askAnswerJsonOrSkip(testId, bank.missing.length);
     if (pasted?.length) {
+      promptSnapshots.set(bank.missing, snapshot);
       const enrichedPasted = validateAndEnrichAnswers(pasted, bank.missing);
       availableAnswers = availableAnswers.concat(enrichedPasted);
       bank = matchBankAnswers(questions, availableAnswers);
@@ -1205,19 +1157,26 @@ async function processTest(page, url, context) {
     }
     if (!context.apiKeys.length) throw new Error(`Thiếu đáp án cho ${bank.missing.length} câu và chưa có Gemini API key.`);
     console.log(`  Answer bank khớp ${bank.matched.length}/${questions.length}; gửi ${bank.missing.length} câu còn lại cho Gemini...`);
-    const solved = await callGemini(context.apiKeys, context.models, buildPrompt(bank.missing), bank.missing);
-    model = solved.model;
-    if (solved.imageCount) console.log(`  Đã gửi kèm ${solved.imageCount} ảnh cho Gemini.`);
-    answers = answers.concat(validateAndEnrichAnswers(solved.answers, bank.missing));
+    const prompt = buildPrompt(bank.missing, snapshot);
+    const solvedAnswers = [];
+    for (const part of math.splitPrompt(prompt)) {
+      const numbers = [...part.matchAll(/^=== CÂU (\d+) ===/gm)].map(match => Number(match[1]));
+      const batch = bank.missing.filter(q => numbers.includes(q.number));
+      const solved = await callGemini(context.apiKeys, context.models, part, batch);
+      model = solved.model;
+      if (solved.imageCount) console.log(`  Đã gửi kèm ${solved.imageCount} ảnh cho Gemini.`);
+      solvedAnswers.push(...solved.answers);
+    }
+    answers = answers.concat(validateAndEnrichAnswers(solvedAnswers, bank.missing));
   } else {
     console.log('  Answer bank đã khớp toàn bộ câu theo ID/nội dung.');
   }
   answers.sort((a, b) => a.cau - b.cau);
+  const verified = math.validateExam(questions, answers, { snapshotId: snapshot.id, snapshotSignature: snapshot.signature });
+  if (!verified.ok) throw Object.assign(new Error('Không xác minh được toàn bộ đáp án.'), { report: math.matchReport(verified) });
   saveTestCache(testId, questions, answers);
   console.log(`  Đã cache ${answers.length} đáp án cho bài ${testId || url}.`);
 
-  const rawQuestions = await page.evaluate(() => window.__ONLUYEN_CACHED_QUESTIONS__ || []);
-  await installContentDriver(page, rawQuestions);
   await runAnswers(page, answers, questions.length);
   console.log(`  Đã điền và xác nhận ${questions.length}/${questions.length} câu.`);
 
@@ -1357,6 +1316,7 @@ module.exports = {
   parseJsonArray,
   parseApiQuestions,
   getQuestions,
+  prepareExam,
   buildPrompt,
   geminiImageParts,
   validateAndEnrichAnswers,

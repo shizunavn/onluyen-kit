@@ -1,3 +1,5 @@
+// Readability assertions use display text; source preservation is tested separately.
+const visiblePrompt = value => value.replace(/\\\(([^]*?)\\\)/g, (_m, raw) => require("../math-content").text({version: 1, segments: [{format: "latex", raw}]})).replace(/\s+/g, " ");
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -263,17 +265,17 @@ function trueFalseRow(key, text, token) {
       </div></div>`);
     const numberedPrompt = await send(numberedPage, { action: 'OL_GET_AI_PROMPT' });
     assert.equal(numberedPrompt.ok, true, numberedPrompt.error);
-    assert.match(numberedPrompt.prompt, /mệnh đề chứa biến/);
-    assert.match(numberedPrompt.prompt, /1\) 2x\+1/);
-    assert.match(numberedPrompt.prompt, /6\) 2x-1≤7/);
+    assert.match(visiblePrompt(numberedPrompt.prompt), /mệnh đề chứa biến/);
+    assert.match(visiblePrompt(numberedPrompt.prompt), /1\) 2x\+1/);
+    assert.match(visiblePrompt(numberedPrompt.prompt), /6\) 2x-1≤7/);
     const splitNumberedQuestion = require('./math-cases').splitNumberedQuestion;
     await numberedPage.evaluate(html => {
       document.querySelector('.question-name').innerHTML = html;
     }, splitNumberedQuestion.html);
     const renderedNumberedPrompt = await send(numberedPage, { action: 'OL_GET_AI_PROMPT' });
     assert.equal(renderedNumberedPrompt.ok, true, renderedNumberedPrompt.error);
-    assert.match(renderedNumberedPrompt.prompt, /1\) ″2x\+1/);
-    assert.match(renderedNumberedPrompt.prompt, /6\) ″2x-1≤7″/);
+    assert.match(visiblePrompt(renderedNumberedPrompt.prompt), /1\) ″2x\+1/);
+    assert.match(visiblePrompt(renderedNumberedPrompt.prompt), /6\) ″2x-1≤7″/);
     await numberedPage.evaluate(content => {
       window.__ONLUYEN_RAW_DATA__ = { questions: [{ dataStandard: {
         numberQuestion: 9023, stepIndex: 22, typeAnswer: 2,
@@ -282,7 +284,7 @@ function trueFalseRow(key, text, token) {
     }, splitNumberedQuestion.latex);
     const apiNumberedPrompt = await send(numberedPage, { action: 'OL_GET_AI_PROMPT' });
     assert.equal(apiNumberedPrompt.ok, true, apiNumberedPrompt.error);
-    assert.match(apiNumberedPrompt.prompt, /6\) ″2x-1≤7″/);
+    assert.match(visiblePrompt(apiNumberedPrompt.prompt), /6\) ″2x-1≤7″/);
     const logicQuestion = require('./math-cases').logicNumberedQuestion;
     await numberedPage.evaluate(html => {
       window.__ONLUYEN_RAW_DATA__ = null;
@@ -291,8 +293,8 @@ function trueFalseRow(key, text, token) {
     }, logicQuestion);
     const logicDomPrompt = await send(numberedPage, { action: 'OL_GET_AI_PROMPT' });
     assert.equal(logicDomPrompt.ok, true, logicDomPrompt.error);
-    assert.match(logicDomPrompt.prompt, /1\) P⇒Q; 2\) Q⇒P; 3\) P⇔Q;/);
-    assert.match(logicDomPrompt.prompt, /4\) " P là điều kiện cần để có Q "/);
+    assert.match(visiblePrompt(logicDomPrompt.prompt), /1\) P⇒Q; 2\) Q⇒P; 3\) P⇔Q;/);
+    assert.match(visiblePrompt(logicDomPrompt.prompt), /4\) " P là điều kiện cần để có Q "/);
     await numberedPage.evaluate(content => {
       window.__ONLUYEN_RAW_DATA__ = { questions: [{ dataStandard: {
         numberQuestion: 9026, stepIndex: 25, typeAnswer: 2,
@@ -301,14 +303,15 @@ function trueFalseRow(key, text, token) {
     }, logicQuestion);
     const logicApiPrompt = await send(numberedPage, { action: 'OL_GET_AI_PROMPT' });
     assert.equal(logicApiPrompt.ok, true, logicApiPrompt.error);
-    assert.match(logicApiPrompt.prompt, /1\) P⇒Q; 2\) Q⇒P; 3\) P⇔Q;/);
+    assert.match(visiblePrompt(logicApiPrompt.prompt), /1\) P⇒Q; 2\) Q⇒P; 3\) P⇔Q;/);
     const brokenNumberedPrompt = await numberedPage.evaluate(() => {
       window.__ONLUYEN_RAW_DATA__ = null;
       document.querySelector('math').innerHTML = '<mi>x</mi><mo>)</mo>';
       return new Promise(resolve => window.__onluyenListener({ action: 'OL_GET_AI_PROMPT' }, {}, resolve));
     });
-    assert.equal(brokenNumberedPrompt.ok, false);
-    assert.match(brokenNumberedPrompt.error, /Ngoặc đóng/);
+    assert.equal(brokenNumberedPrompt.ok, true);
+    assert.match(brokenNumberedPrompt.prompt, /\[MathML\]/);
+    assert.match(brokenNumberedPrompt.prompt, /<mi>x<\/mi><mo>\)<\/mo>/);
     assert.equal(await numberedPage.$eval('.answer-input input', element => element.value), '');
     assert.equal(await numberedPage.$eval('.submit-bar button', element => element.textContent), 'BỎ QUA');
     await numberedPage.close();
@@ -504,7 +507,7 @@ function trueFalseRow(key, text, token) {
     });
     const romanPrompt = await send(romanApiPage, { action: 'OL_GET_AI_PROMPT' });
     assert.equal(romanPrompt.ok, true, romanPrompt.error);
-    assert.match(romanPrompt.prompt, /50GB/);
+    assert.match(romanPrompt.prompt, /50.*GB/);
     assert.match(romanPrompt.prompt, /ID câu: 13537524/);
     await romanApiPage.close();
 
@@ -543,11 +546,12 @@ function trueFalseRow(key, text, token) {
       root.insertBefore(option, document.querySelector('.submit-bar'));
       root.querySelectorAll('.question-option').forEach((element, i) => { element.querySelector('.question-option-label').innerText = String.fromCharCode(65 + i); });
     });
-    await send(imagePage, { action: 'OL_START_BOT' });
+    const imageStart = await send(imagePage, { action: 'OL_START_BOT' });
+    assert.equal(imageStart.ok, true, imageStart.error);
     await imagePage.waitForFunction(() => window.__BOT_RUNNING__ === false);
-    assert.equal(await imagePage.evaluate(() => window.__imageSelected), 'plot-b');
     const imageErrors = await imagePage.evaluate(() => (window.__runtimeMessages || []).filter(message => message.action === 'BOT_ERROR'));
     assert.deepEqual(imageErrors, []);
+    assert.equal(await imagePage.evaluate(() => window.__imageSelected), 'plot-b');
     const invalidImageLoad = await send(imagePage, { action: 'OL_LOAD_DATABASE', json: [{ cau: 1, id: '12905197', loai: 'MCQ', dap_an: 'A', anh_dap_an: ['https://example.test/not-present.png'] }] });
     assert.equal(invalidImageLoad.ok, false);
     const base64Image = 'data:image/png;base64,iVBORw0KGgo=';
@@ -567,7 +571,7 @@ function trueFalseRow(key, text, token) {
     await send(imagePage, { action: 'OL_START_BOT' });
     await imagePage.waitForFunction(() => window.__BOT_RUNNING__ === false);
     assert.equal(await imagePage.evaluate(() => window.__imageSelected), null);
-    assert.match(await imagePage.evaluate(() => window.__runtimeMessages.find(message => message.action === 'BOT_ERROR')?.error), /Khớp nhiều lựa chọn/);
+    assert.match(await imagePage.evaluate(() => window.__runtimeMessages.find(message => message.action === 'BOT_ERROR')?.error), /khớp nhiều lựa chọn/i);
     await imagePage.close();
 
     const tfPage = await mount(browser, `
@@ -678,7 +682,7 @@ function trueFalseRow(key, text, token) {
     }
     await send(mcqPage, {
       action: 'OL_LOAD_DATABASE',
-      json: [{ cau: 1, loai: 'MCQ', dap_an: 'D', noi_dung_dap_an: 'phân phối.' }]
+      json: [{ cau: 1, loai: 'MCQ', dap_an: 'B', noi_dung_dap_an: 'phân phối.' }]
     });
     await send(mcqPage, { action: 'OL_START_BOT' });
     await mcqPage.waitForFunction(() => window.__BOT_RUNNING__ === false);
@@ -960,7 +964,7 @@ function trueFalseRow(key, text, token) {
     });
     assert.equal(mathLoad.ok, true, mathLoad.error);
     assert.equal(mathLoad.answers[0].dap_an, 'A');
-    assert.equal(mathLoad.answers[0].noi_dung_dap_an, '10^{-2} pm.');
+    assert.equal(mathLoad.answers[0].noi_dung_dap_an, '$10^{-2}$ pm.', 'Keep the supplied source rather than replacing it with display text');
     await send(mathJaxPage, { action: 'OL_START_BOT' });
     await mathJaxPage.waitForFunction(() => window.__BOT_RUNNING__ === false);
     const mathState = await mathJaxPage.evaluate(() => ({
@@ -1057,7 +1061,7 @@ function trueFalseRow(key, text, token) {
     await send(safetyPage, { action: 'OL_START_BOT' });
     await safetyPage.waitForFunction(() => window.__BOT_RUNNING__ === false);
     assert.equal(await safetyPage.evaluate(() => window.__safeClicks), 0, 'Ambiguous math must not click or submit');
-    assert.match(await safetyPage.evaluate(() => window.__runtimeMessages.filter(m => m.action === 'BOT_ERROR').at(-1).error), /Khớp nhiều lựa chọn/);
+    assert.match(await safetyPage.evaluate(() => window.__runtimeMessages.filter(m => m.action === 'BOT_ERROR').at(-1).error), /khớp nhiều lựa chọn/i);
     await safetyPage.evaluate(() => {
       document.querySelector('.question-option-content').innerHTML = '<mjx-container><svg></svg></mjx-container>';
     });
@@ -1254,7 +1258,7 @@ function trueFalseRow(key, text, token) {
       }]
     });
     assert.equal(latexLoad.answers[0].dap_an, 'A');
-    assert.equal(latexLoad.answers[0].noi_dung_dap_an, 'A∪B={2;4;7;8;9;12}');
+    assert.equal(latexLoad.answers[0].noi_dung_dap_an, '$ A\\cup B=\\left\\{ 2;4;7;8;9;12 \\right\\} $');
     await send(latexPage, { action: 'OL_START_BOT' });
     await latexPage.waitForFunction(() => window.__BOT_RUNNING__ === false);
     const latexState = await latexPage.evaluate(() => ({
@@ -1570,7 +1574,9 @@ function trueFalseRow(key, text, token) {
     const apiSolve = await send(apiPage, { action: 'OL_CALL_AI_SOLVE' });
     assert.equal(apiSolve.ok, true, apiSolve.error);
     assert.equal(apiSolve.imageCount, 1);
-    const { math_content: mcqMathContent, ...mcqSolved } = apiSolve.answers[0];
+    const { math_content: mcqMathContent, verification: mcqVerification, snapshot_id: solveSnapshot, ...mcqSolved } = apiSolve.answers[0];
+    assert.equal(mcqVerification.basis, 'snapshot');
+    assert.ok(solveSnapshot);
     assert.ok(mcqMathContent.answer.segments.length);
     assert.deepEqual(mcqSolved, {
       cau: 1,
@@ -1578,10 +1584,11 @@ function trueFalseRow(key, text, token) {
       loai: 'MCQ',
       noi_dung_cau_hoi: 'Câu API trực tiếp',
       dap_an: 'A',
-      noi_dung_dap_an: 'x < 2',
       id_dap_an: 0
     });
-    const { math_content: tfMathContent, ...tfSolved } = apiSolve.answers[1];
+    const { math_content: tfMathContent, verification: tfVerification, snapshot_id: tfSnapshot, ...tfSolved } = apiSolve.answers[1];
+    assert.equal(tfVerification.basis, 'snapshot');
+    assert.equal(tfSnapshot, solveSnapshot);
     assert.ok(tfMathContent.statements.a.segments.length);
     assert.deepEqual(tfSolved, {
       cau: 2,

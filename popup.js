@@ -58,6 +58,12 @@ function showMessage(text, type = 'info') {
   showMessage.timer = setTimeout(() => { el.className = 'message'; }, 4000);
 }
 
+function verificationSummary(report) {
+  if (!report?.verified?.length) return '';
+  const snapshot = report.verified.filter(item => item.basis === 'snapshot').length;
+  return ` Xác minh: ${report.verified.length - snapshot} theo cấu trúc, ${snapshot} theo snapshot/nguồn gốc.`;
+}
+
 function showProgressError(error) {
   const text = error?.message || String(error);
   $('progressBox').className = 'progress-box show';
@@ -188,7 +194,10 @@ $('btnCopyPrompt').addEventListener('click', async () => {
   try {
     const res = await sendToPage({ action: 'OL_GET_AI_PROMPT' });
     if (!res?.ok) throw new Error(res?.error || 'Không tạo được prompt.');
-    await navigator.clipboard.writeText(res.prompt);
+    await navigator.clipboard.writeText(res.parts?.[0] || res.prompt);
+    if (res.parts?.length > 1) {
+      for (let i = 0; i < res.parts.length; i++) await download(`OnluyenKit-prompt-${i + 1}.txt`, res.parts[i], 'text/plain');
+    }
     const imageResults = await Promise.allSettled((res.images || []).map(image =>
       chrome.runtime.sendMessage({
         action: 'OL_DOWNLOAD_IMAGE',
@@ -201,7 +210,7 @@ $('btnCopyPrompt').addEventListener('click', async () => {
     ));
     const savedImages = imageResults.filter(result => result.status === 'fulfilled').length;
     const failedImages = imageResults.length - savedImages;
-    $('progressBox').textContent = `✅ Đã tạo prompt cho ${res.count} câu.${failedImages ? ` Không tải được ${failedImages} ảnh; cần lấy lại ảnh trước khi giải.` : ''}`;
+    $('progressBox').textContent = `✅ Đã tạo prompt cho ${res.count} câu.${res.parts?.length > 1 ? ` Đã lưu ${res.parts.length} phần vào Downloads; clipboard chứa phần 1. Gửi từng phần và gộp JSON trước khi nạp.` : ''}${failedImages ? ` Không tải được ${failedImages} ảnh; cần lấy lại ảnh trước khi giải.` : ''}`;
     showMessage(
       failedImages
         ? `Đã sao chép prompt; lưu được ${savedImages}/${imageResults.length} ảnh.`
@@ -231,7 +240,7 @@ $('btnSaveDb').addEventListener('click', async () => {
     const normalizedJson = res.json || text;
     $('txtDatabase').value = normalizedJson;
     await chrome.storage.local.set({ [savedDbStorageKey()]: normalizedJson });
-    $('progressBox').textContent = `✅ Đã nạp ${res.count} câu vào Database.`;
+    $('progressBox').textContent = `✅ Đã nạp ${res.count} câu vào Database.${verificationSummary(res.report)}`;
     showMessage(`Đã nạp thành công ${res.count} câu vào Database!`, 'success');
     updateBotStatus();
   } catch (e) {
@@ -312,7 +321,7 @@ $('btnValidateDb').addEventListener('click', async () => {
     $('progressBox').textContent = 'Đang đọc và kiểm tra toàn bộ đề...';
     const result = await sendToPage({ action: 'OL_VALIDATE_DATABASE', json: $('txtDatabase').value.trim() || undefined });
     if (!result?.ok) throw new Error(result?.error || 'Kiểm tra thất bại.');
-    $('progressBox').textContent = `Đã kiểm tra đủ ${result.count} câu. Có thể tự điền.`;
+    $('progressBox').textContent = `Đã kiểm tra đủ ${result.count} câu. Có thể tự điền.${verificationSummary(result.report)}`;
   } catch (error) { showProgressError(error); }
   finally { setBusy(false); }
 });

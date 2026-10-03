@@ -1,3 +1,5 @@
+// Readability assertions use display text; source preservation is tested separately.
+const visiblePrompt = value => value.replace(/\\\(([^]*?)\\\)/g, (_m, raw) => require("../math-content").text({version: 1, segments: [{format: "latex", raw}]})).replace(/\s+/g, " ");
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const http = require('node:http');
@@ -81,7 +83,7 @@ const romanQuestions = parseApiQuestions([{ dataStandard: {
     options: ['$x+y<0$', '$x-y\\le50$', '$x+y\\ge50$', '$x+y\\le50$'].map((content, index) => ({ idOption: index, content }))
   } }
 } }]);
-assert.match(buildPrompt(romanQuestions), /50GB/);
+assert.match(buildPrompt(romanQuestions), /50.*GB/);
 const localizedEnglishQuestions = parseApiQuestions([{ dataStandard: {
   numberQuestion: 13257730, stepIndex: 0, typeAnswer: 0, currentLang: 'en',
   languagesData: { en: { content: 'Choose the best arrangement.' } },
@@ -98,27 +100,27 @@ const numberedShortQuestion = parseApiQuestions([{ dataStandard: {
 } }]);
 assert.equal(numberedShortQuestion[0].answerType, 'SHORT');
 const numberedShortPrompt = buildPrompt(numberedShortQuestion);
-assert.match(numberedShortPrompt, /mệnh đề chứa biến/);
-assert.match(numberedShortPrompt, /1\) 2x\+1/);
-assert.match(numberedShortPrompt, /6\) 2x-1≤7/);
+assert.match(visiblePrompt(numberedShortPrompt), /mệnh đề chứa biến/);
+assert.match(visiblePrompt(numberedShortPrompt), /1\) 2x\+1/);
+assert.match(visiblePrompt(numberedShortPrompt), /6\) 2x-1≤7/);
 for (const source of Object.values(require('./math-cases').splitNumberedQuestion)) {
   const splitNumberedShortQuestion = parseApiQuestions([{ dataStandard: {
     stepIndex: 22, numberQuestion: 9023, typeAnswer: 2,
     languagesData: { vi: { content: source } }
   } }]);
   const prompt = buildPrompt(splitNumberedShortQuestion);
-  assert.match(prompt, /1\) ″2x\+1/);
-  assert.match(prompt, /6\) ″2x-1≤7″/);
+  assert.match(visiblePrompt(prompt), /1\) ″2x\+1/);
+  assert.match(visiblePrompt(prompt), /6\) ″2x-1≤7″/);
 }
 const logicShortQuestion = parseApiQuestions([{ dataStandard: {
   stepIndex: 25, numberQuestion: 9026, typeAnswer: 2,
   languagesData: { vi: { content: require('./math-cases').logicNumberedQuestion } }
 } }]);
 const logicPrompt = buildPrompt(logicShortQuestion);
-assert.match(logicPrompt, /1\) P⇒Q;/);
-assert.match(logicPrompt, /2\) Q⇒P;/);
-assert.match(logicPrompt, /3\) P⇔Q;/);
-assert.match(logicPrompt, /4\) " P là điều kiện cần để có Q "/);
+assert.match(visiblePrompt(logicPrompt), /1\) P⇒Q;/);
+assert.match(visiblePrompt(logicPrompt), /2\) Q⇒P;/);
+assert.match(visiblePrompt(logicPrompt), /3\) P⇔Q;/);
+assert.match(visiblePrompt(logicPrompt), /4\) " P là điều kiện cần để có Q "/);
 const imageQuestions = parseApiQuestions([{ dataStandard: {
   stepIndex: 0, numberQuestion: 12905197, typeAnswer: 0,
   languagesData: { vi: { content: '<p>Chọn hình miền nghiệm.</p>', options: [
@@ -168,11 +170,12 @@ assert.equal(bankMatch.matched[0].noi_dung_dap_an, 'trao đổi.');
 const freshToken = buildPrompt(questions).match(/snapshot_id: ([a-f0-9-]+)/)[1];
 const enriched = validateAndEnrichAnswers([{ cau: 1, id: questions[0].sourceId, snapshot_id: freshToken, loai: 'MCQ', dap_an: 'B' }], questions);
 assert.deepEqual(enriched[0], {
+  verification: { version: 1, basis: 'snapshot', evidence: 'snapshot_label', reason: 'Chữ cái của snapshot hiện tại' },
+  snapshot_id: freshToken,
   cau: 1,
   id: '12475737',
   loai: 'MCQ',
   dap_an: 'B',
-  noi_dung_dap_an: 'phân phối.',
   math_content: { version: 1, question: questions[0].math_content.question, answer: questions[0].choices[1].math_content },
   noi_dung_cau_hoi: 'Hoạt động đưa sản phẩm đến tay người tiêu dùng được gọi là'
 });
@@ -190,10 +193,12 @@ assert.deepEqual(validateAndEnrichAnswers(
   [{ cau: 1, id: shortQuestions[0].sourceId, loai: 'SHORT', dap_an: '-2,5' }],
   shortQuestions
 ), [{
+  verification: { version: 1, basis: 'structured', reason: 'ID/nội dung câu khớp và giá trị trả lời ngắn hợp lệ' },
   cau: 1,
   id: '13123314',
   loai: 'SHORT',
   dap_an: '-2,5',
+  math_content: { version: 1, question: shortQuestions[0].math_content.question },
   noi_dung_cau_hoi: 'Có bao nhiêu mệnh đề sai?'
 }]);
 
