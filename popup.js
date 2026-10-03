@@ -15,7 +15,7 @@ const STORE_SAVED_DB = 'onluyen_saved_db';
 function savedDbStorageKey(url = state.tab?.url) {
   try {
     const parsed = new URL(url || '');
-    const match = parsed.pathname.match(/^\/school\/test\/(?:(?:step|history|result)\/)?([^/]+)/)
+    const match = parsed.pathname.match(/^\/school\/test\/(?:(?:step|docx|history|result)\/)?([^/]+)/)
       || parsed.pathname.match(/^\/practices\/([^/]+)/);
     const testId = match?.[1];
     return testId ? `${STORE_SAVED_DB}:${testId}` : STORE_SAVED_DB;

@@ -50,6 +50,36 @@ function answersFor(prepared) {
     dap_an: 'A', noi_dung_dap_an: q.choices[0].text });
 }
 
+async function mountPopup(browser, contentPage) {
+  const popup = await browser.newPage();
+  await popup.setContent(fs.readFileSync(path.join(__dirname, '../popup.html'), 'utf8').replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ''));
+  await popup.exposeFunction('__pageRequest', payload => send(contentPage, payload));
+  await popup.evaluate(url => {
+    window.__activeTab = { id: 1, url };
+    window.__popupStore = {}; window.__clipboard = ''; window.__requests = [];
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
+      writeText: async text => { window.__clipboard = text; }
+    } });
+    window.chrome = {
+      tabs: {
+        query: async () => [window.__activeTab],
+        sendMessage: async (_id, message) => { __requests.push(message); return __pageRequest(message); }
+      },
+      runtime: { getManifest: () => ({ version: 'test' }), onMessage: { addListener() {} }, sendMessage: async () => ({ ok: true }) },
+      storage: { local: {
+        get: async () => __popupStore,
+        set: async values => Object.assign(__popupStore, values),
+        remove: async keys => keys.forEach(key => delete __popupStore[key])
+      } }
+    };
+    // Polling is tested through explicit refreshes to make route changes deterministic.
+    window.setInterval = () => 0;
+  }, contentPage.url());
+  await popup.addScriptTag({ path: path.join(__dirname, '../popup.js') });
+  await popup.waitForFunction(() => document.querySelector('#statusText').textContent.includes('Đã kết nối'));
+  return popup;
+}
+
 (async () => {
   assert.equal(testIdFromUrl(url), 'docx-fixture');
   assert.equal(historyUrlForTest(url), 'https://app.onluyen.vn/school/test/history/docx-fixture');
@@ -68,11 +98,30 @@ function answersFor(prepared) {
     assert.ok(!prepared.questions[12].prompt.includes('TRẮC NGHIỆM NHIỀU LỰA CHỌN'));
     assert.deepEqual(await page.evaluate(() => [__answerClicks, __submitClicks, __navClicks]), [0, 0, 0]);
     const answers = answersFor(prepared);
-    const loaded = await send(page, { action: 'OL_LOAD_DATABASE', json: answers });
-    assert.equal(loaded.ok, true, loaded.error);
+    const popup = await mountPopup(browser, page);
+    for (const route of ['', 'step/', 'docx/', 'history/', 'result/']) {
+      const routeUrl = `https://app.onluyen.vn/school/test/${route}docx-fixture`;
+      await page.evaluate(routeUrl => history.replaceState(null, '', routeUrl), routeUrl);
+      const ping = await send(page, { action: 'OL_PING' });
+      assert.equal(ping.examKey, 'onluyen_saved_db:docx-fixture');
+      assert.equal(await popup.evaluate(routeUrl => savedDbStorageKey(routeUrl), routeUrl), ping.examKey);
+      assert.equal(testIdFromUrl(routeUrl), 'docx-fixture');
+    }
+    await page.evaluate(url => history.replaceState(null, '', url), url);
+    await popup.click('#btnCopyPrompt');
+    await popup.waitForFunction(() => !document.querySelector('#btnCopyPrompt').disabled);
+    assert.match(await popup.$eval('#progressBox', el => el.textContent), /Đã tạo prompt cho 16 câu/);
+    assert.ok(await popup.evaluate(() => __clipboard.includes('Ứng xử số và bản quyền')));
+    await popup.$eval('#txtDatabase', (el, answers) => { el.value = JSON.stringify(answers); }, answers);
+    await popup.click('#btnSaveDb');
+    await popup.waitForFunction(() => !document.querySelector('#btnSaveDb').disabled);
+    assert.match(await popup.$eval('#progressBox', el => el.textContent), /Đã nạp 16 câu/);
+    assert.ok(await popup.evaluate(() => __popupStore['onluyen_saved_db:docx-fixture']));
+    assert.equal(await popup.evaluate(() => __popupStore['onluyen_saved_db:docx']), undefined);
     assert.equal(await page.evaluate(() => window.__CLI_RUNTIME_MESSAGES__.filter(m => m.action === 'BOT_PROGRESS').length), 0);
-    const start = await send(page, { action: 'OL_START_BOT', json: answers });
-    assert.equal(start.ok, true, start.error);
+    await popup.click('#btnStartBot');
+    await popup.waitForFunction(() => !document.querySelector('#btnStartBot').disabled);
+    assert.ok(!await popup.$eval('#progressBox', el => el.textContent.includes('❌')));
     await page.waitForFunction(() => __CLI_RUNTIME_MESSAGES__.some(m => m.action === 'BOT_DONE' || m.action === 'BOT_ERROR'));
     const state = await page.evaluate(() => ({ clicks: __answerClicks, submits: __submitClicks, nav: __navClicks,
       done: document.querySelectorAll('.answer-sheet .option.done').length, messages: __CLI_RUNTIME_MESSAGES__ }));
@@ -83,6 +132,19 @@ function answersFor(prepared) {
     assert.equal(state.submits, 0);
     assert.equal(state.nav, 0);
     assert.equal((await send(page, { action: 'OL_PING' })).examKey, 'onluyen_saved_db:docx-fixture');
+    // A real assignment change still rejects an in-flight old response.
+    await popup.evaluate(() => {
+      const send = chrome.tabs.sendMessage;
+      chrome.tabs.sendMessage = async (id, message) => {
+        const response = await send(id, message);
+        if (message.action === 'OL_GET_AI_PROMPT') __activeTab.url = 'https://app.onluyen.vn/school/test/docx/another-assignment';
+        return response;
+      };
+    });
+    await popup.click('#btnCopyPrompt');
+    await popup.waitForFunction(() => !document.querySelector('#btnCopyPrompt').disabled);
+    assert.match(await popup.$eval('#progressBox', el => el.textContent), /Đã chuyển sang bài khác/);
+    await popup.close();
     await send(page, { action: 'OL_START_BOT', json: answers });
     await page.waitForFunction(() => !window.__BOT_RUNNING__);
     assert.equal(await page.evaluate(() => __answerClicks), 28, 'Saved DOCX selections are not toggled again');
