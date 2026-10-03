@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const puppeteer = require('puppeteer');
-const { prepareExam, enterTest, testIdFromUrl, historyUrlForTest } = require('../cli/bulk-runner');
+const { prepareExam, enterTest, testIdFromUrl, historyUrlForTest, parseApiQuestions } = require('../cli/bulk-runner');
 
 const fixture = fs.readFileSync(path.join(__dirname, 'fixtures/docx-sections-16.html'), 'utf8');
 const url = 'https://app.onluyen.vn/school/test/docx/docx-fixture';
@@ -23,6 +23,13 @@ async function mount(browser, mode = {}) {
     window.__ONLUYEN_CACHED_QUESTIONS__ = [...document.querySelectorAll('.sections > .question[id]')].map((root, i) => ({
       dataStandard: { stepId: root.id, stepIndex: i, options: Array(4).fill('6ac000000000000000000000') }
     }));
+    // Model the live log: 18 API entries but only 16 question records.
+    // Original API JSON was not supplied; heading content comes from the DOM fixture.
+    const headings = [...document.querySelectorAll('.section-content')].map(el => ({ dataMaterial: { contentHtml: el.innerHTML } }));
+    __ONLUYEN_CACHED_QUESTIONS__.splice(12, 0, headings[1]);
+    __ONLUYEN_CACHED_QUESTIONS__.unshift(headings[0]);
+    if (mode.packMaterial) __ONLUYEN_CACHED_QUESTIONS__ = [headings[0],
+      { dataMaterial: { datas: __ONLUYEN_CACHED_QUESTIONS__.filter(item => item.dataStandard).map(item => item.dataStandard) } }, headings[1]];
     document.querySelectorAll('.sections > .question[id]').forEach((root, i) => {
       const tf = !!root.querySelector('app-docx-question-true-false-test');
       root.querySelectorAll('.item-answer').forEach(target => target.onclick = () => {
@@ -87,6 +94,11 @@ async function mountPopup(browser, contentPage) {
   try {
     const { page, prepared } = await mount(browser);
     assert.equal(prepared.count, 16);
+    const raw = await page.evaluate(() => __ONLUYEN_CACHED_QUESTIONS__);
+    assert.equal(raw.length, 18);
+    assert.equal(parseApiQuestions(raw).length, 16);
+    assert.equal((await send(page, { action: 'OL_PING' })).qCount, 16);
+    assert.equal(await page.evaluate(() => __CLI_RUNTIME_MESSAGES__.find(m => m.action === 'OL_BADGE').text), '16');
     assert.equal(prepared.questions.filter(q => q.answerType === 'MCQ').length, 12);
     assert.equal(prepared.questions.filter(q => q.answerType === 'TF').length, 4);
     assert.equal(prepared.questions[0].sourceId, '6ac07dceb168a3fd526790a2');
@@ -99,6 +111,7 @@ async function mountPopup(browser, contentPage) {
     assert.deepEqual(await page.evaluate(() => [__answerClicks, __submitClicks, __navClicks]), [0, 0, 0]);
     const answers = answersFor(prepared);
     const popup = await mountPopup(browser, page);
+    assert.equal(await popup.$eval('#qCountPill', el => el.textContent), '16 câu');
     for (const route of ['', 'step/', 'docx/', 'history/', 'result/']) {
       const routeUrl = `https://app.onluyen.vn/school/test/${route}docx-fixture`;
       await page.evaluate(routeUrl => history.replaceState(null, '', routeUrl), routeUrl);
@@ -114,6 +127,7 @@ async function mountPopup(browser, contentPage) {
     assert.ok(await popup.evaluate(() => __clipboard.includes('Ứng xử số và bản quyền')));
     await popup.$eval('#txtDatabase', (el, answers) => { el.value = JSON.stringify(answers); }, answers);
     await popup.click('#btnSaveDb');
+    await popup.waitForFunction(() => /Đã nạp|❌/.test(document.querySelector('#progressBox').textContent));
     await popup.waitForFunction(() => !document.querySelector('#btnSaveDb').disabled);
     assert.match(await popup.$eval('#progressBox', el => el.textContent), /Đã nạp 16 câu/);
     assert.ok(await popup.evaluate(() => __popupStore['onluyen_saved_db:docx-fixture']));
@@ -149,6 +163,13 @@ async function mountPopup(browser, contentPage) {
     await page.waitForFunction(() => !window.__BOT_RUNNING__);
     assert.equal(await page.evaluate(() => __answerClicks), 28, 'Saved DOCX selections are not toggled again');
     await page.close();
+
+    const grouped = await mount(browser, { packMaterial: true });
+    assert.equal(await grouped.page.evaluate(() => __ONLUYEN_RAW_DATA__.questions.length), 3);
+    assert.equal(grouped.prepared.count, 16);
+    assert.equal((await send(grouped.page, { action: 'OL_PING' })).qCount, 16);
+    assert.equal(await grouped.page.evaluate(() => __CLI_RUNTIME_MESSAGES__.find(m => m.action === 'OL_BADGE').text), '16');
+    await grouped.page.close();
 
     const shuffled = await mount(browser);
     const original = answersFor(shuffled.prepared);
@@ -203,9 +224,32 @@ async function mountPopup(browser, contentPage) {
     await incomplete.page.evaluate(() => document.querySelector('.sections > .question:last-of-type').remove());
     const missing = await send(incomplete.page, { action: 'OL_PREPARE_EXAM' });
     assert.equal(missing.ok, false);
-    assert.match(missing.error, /DOCX.*chưa render/);
+    assert.match(missing.error, /15\/16 câu DOCX/);
+    assert.match(missing.error, /Câu 16/);
+    assert.ok(missing.report.issues.some(issue => issue.number === 16 && issue.code === 'NOT_RENDERED'));
     assert.equal(await incomplete.page.evaluate(() => __answerClicks), 0);
     await incomplete.page.close();
+
+    const emptyChoice = await mount(browser);
+    await emptyChoice.page.evaluate(() => document.querySelector('.sections > .question:last-of-type .option-content').replaceChildren());
+    const empty = await send(emptyChoice.page, { action: 'OL_PREPARE_EXAM' });
+    assert.equal(empty.ok, false);
+    assert.match(empty.error, /Câu 16, ý a/);
+    assert.ok(empty.report.issues.some(issue => issue.number === 16 && issue.label === 'a' && issue.code === 'NOT_RENDERED'));
+    assert.equal(await emptyChoice.page.evaluate(() => __answerClicks), 0);
+    await emptyChoice.page.close();
+
+    const absentApiQuestion = await mount(browser);
+    await absentApiQuestion.page.evaluate(() => {
+      __ONLUYEN_CACHED_QUESTIONS__.push({ dataStandard: { stepId: 'unrendered-17', stepIndex: 16 } });
+      window.postMessage({ type: 'ONLUYEN_RAW_TEST_DATA', payload: { questions: __ONLUYEN_CACHED_QUESTIONS__ } }, '*');
+    });
+    await absentApiQuestion.page.waitForFunction(() => __ONLUYEN_RAW_DATA__.questions.length === 19);
+    const absent = await send(absentApiQuestion.page, { action: 'OL_PREPARE_EXAM' });
+    assert.equal(absent.ok, false);
+    assert.match(absent.error, /16\/17 câu DOCX; API: 17 câu trong 19 mục/);
+    assert.equal(await absentApiQuestion.page.evaluate(() => __answerClicks), 0);
+    await absentApiQuestion.page.close();
     console.log('OK: actual 16-question DOCX fixture, shared CLI/extension driver, MCQ/TF autosave, reorder, incomplete sources and zero-click failures');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

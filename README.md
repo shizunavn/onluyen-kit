@@ -33,6 +33,8 @@ Số câu và nút chuyển câu được lấy từ các ô trên phiếu trả
 
 Popup, content script và CLI nhận cùng ID bài ở các đường dẫn làm bài, DOCX và History. Database được lưu theo ID thật của bài; mở lại popup trên cùng đề DOCX không bị coi là chuyển bài. Nếu chuyển sang một bài khác trong lúc chờ phản hồi, popup vẫn từ chối kết quả của bài trước.
 
+Mảng dữ liệu API có thể chứa cả tiêu đề phần và tư liệu. Bộ đếm chỉ tính câu hỏi thực tế, kể cả các câu con trong nhóm tư liệu; ví dụ 18 mục API gồm 16 câu không khiến bot chờ thêm hai câu. Các mục tư liệu vẫn được giữ làm nguồn prompt. Nếu DOCX thiếu câu hoặc lựa chọn, báo cáo nêu số câu đã đọc, số câu từ API/phiếu trả lời và câu/ý chưa render.
+
 Trong cùng tab và bài làm, tạo prompt, nạp database và tự điền dùng chung bản đề đã đọc. Bấm **Bắt đầu Tự Điền** có thể nạp luôn JSON trong ô; không cần nạp riêng trước. JSON đã xác minh không bị kiểm tra toàn đề lần nữa. Chuyển bài, thay nguồn API, số câu hoặc nội dung đang hiển thị làm mất hiệu lực bản lưu. Trước mỗi lần chọn/lưu đáp án, bot vẫn kiểm tra câu trên giao diện.
 
 API tải bổ sung trong lúc đọc hoặc lưu được đối chiếu với đề đã thu. Nếu dữ liệu bổ sung khớp, tiện ích giữ snapshot và dùng tiếp, không quét lại toàn đề. Thay wrapper, khoảng trắng hoặc định dạng công thức tương đương không được coi là đổi đề. ID, nội dung và thứ tự lựa chọn thực sự thay đổi vẫn làm mất hiệu lực bản kiểm tra.

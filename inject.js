@@ -38,7 +38,7 @@
             assignmentInfo
           }
         }, '*');
-        console.log(`🔥 [OnluyenBot] Đã hook thành công ${questions.length} câu hỏi!`);
+        console.log(`🔥 [OnluyenBot] Đã hook thành công ${questions.length} mục API (gồm câu hỏi và tư liệu/phần đề).`);
       }
     } catch (err) {
       console.warn('⚠️ [OnluyenBot] Lỗi emitData:', err);

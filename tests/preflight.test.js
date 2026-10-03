@@ -395,11 +395,11 @@ async function installApiDelivery(page) {
     const partial = await mount(browser);
     await partial.evaluate(() => {
       document.querySelector('.answer-sheet').remove();
-      window.__ONLUYEN_RAW_DATA__ = { questions: [{ dataStandard: { stepIndex: 0, numberQuestion: 12905165, typeAnswer: 0, languagesData: { vi: { content: 'Đề câu 1.', options: [{ content: 'A' }, { content: 'B' }] } } } }, {}] };
+      window.__ONLUYEN_RAW_DATA__ = { questions: [{ dataStandard: { stepIndex: 0, numberQuestion: 12905165, typeAnswer: 0, languagesData: { vi: { content: 'Đề câu 1.', options: [{ content: 'A' }, { content: 'B' }] } } } }, { dataStandard: { stepIndex: 1, numberQuestion: 9999, typeAnswer: 0 } }] };
     });
     const blocked = await send(partial, { action: 'OL_LOAD_DATABASE', json: answers });
     assert.equal(blocked.ok, false);
-    assert.match(blocked.error, /Không thể đọc trước toàn bộ đề/);
+    assert.match(blocked.error, /Câu 2: API thiếu phương án và không tìm thấy nút mở câu/);
     assert.deepEqual(await partial.evaluate(() => [__clicks, __submits]), [0, 0]);
     await partial.close();
     const storageFailure = await mount(browser);

@@ -105,7 +105,7 @@
       }
       window.__ONLUYEN_RAW_DATA__ = nextPayload;
       window.__ONLUYEN_RAW_DATA_SCORE__ = nextScore;
-      console.log(`📦 [OnluyenBot] Đã đồng bộ ${nextPayload.questions?.length || 0} câu (độ đầy đủ ${nextScore}).`);
+      console.log(`📦 [OnluyenBot] Đã đồng bộ ${apiQuestionCount()} câu từ ${nextPayload.questions?.length || 0} mục API (độ đầy đủ ${nextScore}).`);
       const parsedQuestions = parseQuestionsFromRawAPI() || [];
       refreshExamSnapshot(false);
       const completeQuestions = parsedQuestions.filter(question =>
@@ -114,7 +114,7 @@
       console.log(`📚 [OnluyenBot] Parser API: ${completeQuestions.length}/${parsedQuestions.length} câu có đủ đề và lựa chọn.`);
       chrome.runtime.sendMessage({
         action: 'OL_BADGE',
-        text: `${nextPayload.questions?.length || 'OK'}`,
+        text: `${apiQuestionCount() || 'OK'}`,
         type: 'saved'
       }).catch(() => {});
     }
@@ -432,6 +432,16 @@
       : null;
   }
 
+  function apiQuestionCount() {
+    // The API array also carries section headings/material containers. Count
+    // question records (including incomplete ones), not top-level items.
+    return (window.__ONLUYEN_RAW_DATA__?.questions || []).reduce((count, item) => {
+      const children = item?.dataMaterial?.datas || item?.dataMaterial?.data;
+      if (item?.dataMaterial && Array.isArray(children) && children.length) return count + children.length;
+      return count + (item?.dataStandard ? 1 : 0);
+    }, 0);
+  }
+
   function docxQuestionRoots() {
     return [...document.querySelectorAll('.sections > .question[id]')]
       .filter(root => root.querySelector('app-docx-question-multiple-choice, app-docx-question-true-false-test'));
@@ -461,6 +471,7 @@
         images: choiceImages(option)
       }));
       return { number, sourceId: root.id, answerType: tf ? 'TF' : 'MCQ', origin: 'dom',
+        ...(!math.toPromptContent(math.metadata(promptElement)).ok ? { readError: 'Nội dung câu DOCX chưa render.' } : {}),
         prompt: materialPrompt ? cleanText(`[Đoạn tư liệu: ${materialPrompt}]\n${semanticElementText(promptElement)}`) : semanticElementText(promptElement),
         choices, expectedChoiceCount: 4,
         math_content: { version: 1, question: materialPrompt
@@ -551,6 +562,7 @@
   }
 
   function hasCompleteChoices(question) {
+    if (question.readError) return false;
     if (!math.toPromptContent(question.math_content?.question || question.prompt).ok) return false;
     return question.answerType === 'SHORT' || (question.choices.length >= Math.max(2, question.expectedChoiceCount || 0)
       && question.choices.every(choice => math.toPromptContent(choice.math_content || choice.text).ok || choice.images?.length));
@@ -569,7 +581,8 @@
   }
 
   function expectedExamTotal(questions) {
-    return Math.max(sidebarQuestionNumbers().length, window.__ONLUYEN_RAW_DATA__?.questions?.length || 0, questions.length);
+    return Math.max(sidebarQuestionNumbers().length, apiQuestionCount(), questions.length,
+      isDocxExam() ? document.querySelectorAll('.sections > .question[id]').length : 0);
   }
 
   function examSourceContext() {
@@ -579,7 +592,9 @@
     const sourceKey = value => math.toPromptContent(value).ok ? math.sourceFingerprint(value) : null;
     const images = values => [...new Set((values || []).map(i => i.src))];
     return JSON.stringify({ revision: examRevision, key: examStorageKey(),
-      sidebar: sidebarQuestionNumbers(), total: window.__ONLUYEN_RAW_DATA__?.questions?.length || 0,
+      sidebar: sidebarQuestionNumbers(), total: apiQuestionCount(),
+      unresolvedApi: !isDocxExam() && !apiQuestionCount() && window.__ONLUYEN_RAW_DATA__?.questions?.length
+        ? JSON.stringify(window.__ONLUYEN_RAW_DATA__.questions) : null,
       api: questions.map(q => ({ number: q.number, id: q.sourceId, type: q.raw?.typeAnswer != null ? q.answerType : null,
         prompt: sourceKey(q.math_content?.question || q.prompt), expectedChoiceCount: q.expectedChoiceCount,
         images: images(q.images),
@@ -595,6 +610,7 @@
     const before = JSON.parse(previous), after = JSON.parse(next);
     const problem = (number, reason, code = 'PAGE_CHANGED') => ({ number, reason, code });
     if (before.revision !== after.revision || before.key !== after.key) return problem(null, 'Đã chuyển bài.');
+    if (before.unresolvedApi !== after.unresolvedApi && after.unresolvedApi) return problem(null, 'API vừa cập nhật nhưng chưa có nguồn để xác minh.', 'SCRAPE_INCOMPLETE');
     if (after.total > questions.length || after.sidebar.some(number => !questions.some(q => q.number === number))) {
       return problem(null, 'Phiếu trả lời/API có thêm câu chưa được đọc.', 'SCRAPE_INCOMPLETE');
     }
@@ -666,6 +682,39 @@
     }
   }
 
+  function docxCollectionIssues(rendered) {
+    const issues = [];
+    const expected = expectedExamTotal(rendered);
+    const counts = `Đã đọc ${rendered.length}/${expected} câu DOCX; API: ${apiQuestionCount()} câu trong ${window.__ONLUYEN_RAW_DATA__?.questions?.length || 0} mục; phiếu trả lời: ${sidebarQuestionNumbers().length} câu.`;
+    if (rendered.length < expected) issues.push({ number: null, id: null, status: 'incomplete',
+      code: 'SCRAPE_INCOMPLETE', reason: counts, source: [] });
+    for (const number of sidebarQuestionNumbers()) {
+      if (!rendered.some(q => q.number === number)) issues.push({ number, id: null, status: 'incomplete',
+        code: 'NOT_RENDERED', reason: 'Chưa đọc được nội dung câu DOCX trên giao diện.', source: [] });
+    }
+    for (const root of document.querySelectorAll('.sections > .question[id]')) {
+      if (!root.querySelector('app-docx-question-multiple-choice, app-docx-question-true-false-test')) issues.push({
+        number: Number(cleanText(root.querySelector('.quetion-number, .question-number')?.innerText).match(/Câu\s*:?\s*(\d+)/i)?.[1]) || null,
+        id: root.id, status: 'unsupported', code: 'UNSUPPORTED_COMPONENT',
+        reason: 'Chưa hỗ trợ bộ dựng câu DOCX này.', source: [] });
+    }
+    for (const q of rendered.filter(q => !hasCompleteChoices(q))) {
+      if (q.readError || !math.toPromptContent(q.math_content?.question || q.prompt).ok) issues.push({
+        number: q.number, id: q.sourceId, status: 'incomplete', code: 'NOT_RENDERED',
+        reason: q.readError || 'Thiếu nguồn nội dung câu DOCX.', source: q.math_content?.question?.segments || [] });
+      if (q.choices.length < q.expectedChoiceCount) issues.push({ number: q.number, id: q.sourceId,
+        status: 'incomplete', code: 'SCRAPE_INCOMPLETE',
+        reason: `Mới đọc ${q.choices.length}/${q.expectedChoiceCount} lựa chọn/ý DOCX.`, source: [] });
+      for (const c of q.choices) {
+        const result = math.toPromptContent(c.math_content || c.text);
+        if (!result.ok && !c.images?.length) issues.push({ number: q.number, id: q.sourceId, label: c.label,
+          status: 'incomplete', code: 'NOT_RENDERED', reason: result.diagnostics[0]?.reason || 'Lựa chọn DOCX chưa có nguồn.',
+          source: c.math_content?.segments || [] });
+      }
+    }
+    return issues.length ? issues : [{ number: null, id: null, status: 'incomplete', code: 'SCRAPE_INCOMPLETE', reason: counts, source: [] }];
+  }
+
   async function getCompleteExamQuestions() {
     if (examCollection) return examCollection;
     examCollection = (async () => {
@@ -687,9 +736,12 @@
           }
           await sleep(80);
         }
-        throw Object.assign(new Error('Đề DOCX chưa render đủ câu hoặc lựa chọn; chưa bắt đầu tự điền.'), { code: 'SCRAPE_INCOMPLETE' });
+        const rendered = extractDocxQuestions();
+        const issues = docxCollectionIssues(rendered);
+        lastMatchReport = math.matchReport({ ok: false, count: rendered.length, issues });
+        throw matchFailure(lastMatchReport);
       }
-      if (!window.__ONLUYEN_RAW_DATA__?.questions?.length && !sidebarQuestionNumbers().length
+      if (!apiQuestionCount() && !sidebarQuestionNumbers().length
           && (/^\/practices(?:\/|$)/.test(location.pathname) || document.querySelector('app-practice-step-question-option, app-practice-step-question-true-false'))) {
         throw new Error('Không thể đọc trước toàn bộ đề luyện tập: không có API đầy đủ hoặc thanh điều hướng.');
       }
@@ -2189,7 +2241,8 @@
     // 1. PING & KIỂM TRA TRẠNG THÁI
     if (message?.action === 'OL_PING') {
       const hasApiData = !!(window.__ONLUYEN_RAW_DATA__ && window.__ONLUYEN_RAW_DATA__.questions?.length > 0);
-      const qCount = hasApiData ? window.__ONLUYEN_RAW_DATA__.questions.length : extractQuestions().length;
+      const qCount = Math.max(apiQuestionCount(), sidebarQuestionNumbers().length,
+        isDocxExam() ? extractDocxQuestions().length : hasApiData ? 0 : extractQuestions().length);
       sendResponse({
         ok: true,
         url: location.href,
