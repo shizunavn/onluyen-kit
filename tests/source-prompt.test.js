@@ -5,6 +5,39 @@ const puppeteer = require('puppeteer');
 const math = require('../math-content');
 const cli = require('../cli/bulk-runner');
 
+// Real pasted question #13050131. Only the PNG payload is shortened in the
+// fixture; expand it here so the regression exceeds the old 256 KiB HTML cap.
+const antennaHtml = fs.readFileSync(path.join(__dirname, 'fixtures/antenna-base64-question.html'), 'utf8');
+const antennaLarge = antennaHtml.replace('iVBORw0KGgo=', 'A'.repeat(265700));
+const antennaPrompt = math.toPromptContent(antennaHtml);
+assert.ok(antennaLarge.length > 262144);
+assert.equal(antennaPrompt.ok, true);
+assert.deepEqual(math.toPromptContent(antennaLarge), antennaPrompt, 'Media bytes never consume the text/math budget');
+assert.equal(math.sourceFingerprint(antennaLarge), math.sourceFingerprint(antennaHtml));
+assert.match(antennaPrompt.text, /Trên nóc một tòa nhà/);
+assert.match(antennaPrompt.text, /Chiều cao của tòa nhà/);
+for (const number of ['5', '7', '50', '40']) assert.ok(antennaPrompt.text.includes(number));
+assert.doesNotMatch(antennaPrompt.text, /data:image|<svg|<path/);
+assert.ok(antennaPrompt.segments.some(s => s.format === 'mathml' && s.raw.includes('<mn>50</mn>')));
+assert.deepEqual(math.toPromptContent(JSON.parse(JSON.stringify(math.metadata(antennaLarge)))), antennaPrompt);
+const multipleMedia = `<div>${antennaLarge}<img src="data:image/png;base64,${'B'.repeat(600000)}"><svg><svg><path d="${'M1 2 '.repeat(60000)}"/></svg></svg></div>`;
+assert.deepEqual(math.toPromptContent(multipleMedia), antennaPrompt, 'Multiple large images and nested SVGs do not erase any source');
+assert.equal(math.toPromptContent(`<div>${'word '.repeat(60000)}</div>`).ok, false, 'Real oversized prose remains bounded');
+assert.equal(math.toPromptContent(`<math><mtext>${'x'.repeat(270000)}</mtext></math>`).ok, false, 'Real oversized MathML remains bounded');
+assert.equal(math.toPromptContent(`<mjx-container><svg><text>${'x'.repeat(300000)}</text></svg></mjx-container>`).ok, false, 'Large SVG without accessible source is still incomplete');
+const sourceWithMedia = `<div title="a > b"><style>${'a{}'.repeat(100000)}</style><script>${'var x=1;'.repeat(40000)}</script><mjx-container data-latex="x^2"></mjx-container><script type="math/tex">y^2</script></div>`;
+assert.ok(math.toPromptContent(sourceWithMedia).text.includes('x^2'));
+assert.ok(math.toPromptContent(sourceWithMedia).text.includes('y^2'));
+const antennaQuestions = cli.parseApiQuestions([{ dataStandard: { numberQuestion:13050131, stepIndex:5, typeAnswer:2,
+  languagesData:{vi:{content:antennaLarge}} } }]);
+assert.equal(antennaQuestions[0].images.length, 1);
+assert.ok(antennaQuestions[0].images[0].src.length > 265700, 'Image API retains the full original image source');
+const antennaCliPrompt = cli.buildPrompt(antennaQuestions);
+assert.match(antennaCliPrompt, /13050131/);
+assert.match(antennaCliPrompt, /Trên nóc một tòa nhà/);
+assert.ok(antennaCliPrompt.includes('<mn>50</mn>'));
+assert.doesNotMatch(antennaCliPrompt, /A{1000}|<svg|<path/);
+
 // Deliberately outside the parser's grammar. These are sources, not flattened text.
 const unknown = '<math><menclose notation="circle"><mi>x</mi></menclose></math>';
 const other = '<math><menclose notation="circle"><mi>y</mi></menclose></math>';
@@ -18,7 +51,7 @@ const entry = { cau: 1, id: 'source-1', loai: 'MCQ', dap_an: 'A', snapshot_id: s
 const corpus = [content, unknown, other, `$${latex}$`,
   '<math><mfrac><mn>1</mn><mfrac><mi>x</mi><mi>y</mi></mfrac></mfrac></math>',
   '<math><mrow><mn>1</mn><mn>2</mn></mrow></math>',
-  '<mjx-container><svg><text>x</text></svg></mjx-container>'];
+  '<mjx-container><svg><text>x</text></svg></mjx-container>', antennaLarge, multipleMedia, sourceWithMedia];
 const results = corpus.map(value => ({ prompt: math.toPromptContent(value), fingerprint: math.sourceFingerprint(value) }));
 const formatted = results[0].prompt;
 assert.equal(formatted.ok, true);
@@ -32,7 +65,7 @@ assert.ok(formatted.diagnostics.length >= 2);
 assert.equal(math.compare(unknown, unknown).status, 'unsupported');
 assert.notEqual(math.sourceFingerprint(unknown), math.sourceFingerprint(other));
 assert.deepEqual(math.toPromptContent(JSON.parse(JSON.stringify(math.metadata(content)))), formatted);
-assert.equal(results.at(-1).prompt.ok, false, 'Unrendered SVG is not a source');
+assert.equal(results[6].prompt.ok, false, 'Unrendered SVG is not a source');
 assert.ok(!results[5].prompt.text.includes('12'), 'Separate number nodes never become 12');
 assert.equal(math.validateExam([question], [entry], options).mappings[0].verification.basis, 'snapshot');
 assert.equal(math.validateExam([question], [{ ...entry, snapshot_id: 'expired' }], options).ok, false);

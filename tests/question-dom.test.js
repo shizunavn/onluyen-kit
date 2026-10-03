@@ -105,6 +105,34 @@ function trueFalseRow(key, text, token) {
   const browser = await puppeteer.launch({ executablePath, headless: true });
 
   try {
+    // Original pasted HTML, with only its PNG bytes replaced by a synthetic
+    // payload matching the reported size. The outer header is test scaffolding.
+    const antennaHtml = fs.readFileSync(path.join(__dirname, 'fixtures/antenna-base64-question.html'), 'utf8')
+      .replace('iVBORw0KGgo=', 'A'.repeat(265700));
+    const antennaPage = await mount(browser, `<div id="test-step-question"><div class="question-container">
+      <div class="question-info"><div class="num">Câu: 6 <span>#13050131</span></div></div>
+      ${antennaHtml}<div class="submit-bar"><button>BỎ QUA</button></div>
+    </div></div>`);
+    const antennaDomPrompt = await send(antennaPage, { action: 'OL_GET_AI_PROMPT' });
+    assert.equal(antennaDomPrompt.ok, true, antennaDomPrompt.error);
+    assert.match(antennaDomPrompt.prompt, /Trên nóc một tòa nhà/);
+    assert.ok(antennaDomPrompt.prompt.includes('<mn>50</mn>'));
+    assert.doesNotMatch(antennaDomPrompt.prompt, /A{1000}|<svg|<path/);
+    assert.equal(await antennaPage.$eval('#mathplay-answer-1', el => el.value), '', 'Prompt collection never enters an answer');
+    const antennaExam = await send(antennaPage, { action: 'OL_GET_EXAM' });
+    assert.equal(antennaExam.questions[0].images.length, 1);
+    assert.ok(antennaExam.questions[0].images[0].src.length > 265700);
+    await antennaPage.evaluate(content => {
+      window.__ONLUYEN_RAW_DATA__ = { questions: [{ dataStandard: {
+        numberQuestion:13050131, stepIndex:5, typeAnswer:2, languagesData:{vi:{content}}
+      } }] };
+    }, antennaHtml);
+    const antennaApiPrompt = await send(antennaPage, { action:'OL_GET_AI_PROMPT' });
+    assert.equal(antennaApiPrompt.ok, true, antennaApiPrompt.error);
+    assert.match(antennaApiPrompt.prompt, /Chiều cao của tòa nhà/);
+    assert.ok(antennaApiPrompt.prompt.includes('<mn>40</mn>'));
+    await antennaPage.close();
+
     const dateHtml = fs.readFileSync(path.join(__dirname, 'fixtures/vaccination-date-question.html'), 'utf8');
     // The question body is supplied by the user; only the outer test ID/header
     // is synthetic, because their pasted fragment does not contain an ID.

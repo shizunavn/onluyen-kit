@@ -287,30 +287,58 @@
   }
 
   // Small non-executing XML/HTML reader, identical in Node and the browser.
-  function markup(source) {
-    if (source.length > 262144) fail('Nội dung quá dài');
+  function markup(source, contentOnly = false) {
+    if (!contentOnly && source.length > 262144) fail('Nội dung quá dài');
     const root = { name: '#root', attrs: {}, nodes: [] }, stack = [root];
+    let contentLength = 0, skipped = null, skipDepth = 0;
+    const account = size => {
+      contentLength += size;
+      if (contentLength > 262144) fail('Nội dung văn bản/công thức quá dài');
+    };
     source = source.replace(/<(?!\/?[A-Za-z][\w:-]*(?:\s|\/?>)|!--)/g, '&lt;');
-    const parts = source.match(/<!--[\s\S]*?-->|<[^>]*>|[^<]+/g) || [];
-    for (const part of parts) {
+    const parts = source.matchAll(/<!--[\s\S]*?-->|<(?:"[^"]*"|'[^']*'|[^'">])*>|[^<]+/g);
+    for (const match of parts) {
+      const part = match[0];
+      if (skipped) {
+        if (new RegExp(`^<\\/${skipped}\\s*>$`, 'i').test(part)) skipDepth--;
+        else if (new RegExp(`^<${skipped}(?:\\s|>)`, 'i').test(part) && !/\/\s*>$/.test(part)) skipDepth++;
+        if (!skipDepth) skipped = null;
+        continue;
+      }
       if (part.startsWith('<!--')) continue;
       if (part.startsWith('<!') || part.startsWith('<?')) fail('Khai báo XML chưa hỗ trợ');
-      if (!part.startsWith('<')) { stack.at(-1).nodes.push(decode(part)); continue; }
+      if (!part.startsWith('<')) { account(part.length); stack.at(-1).nodes.push(decode(part)); continue; }
       const closing = part.match(/^<\/([\w:-]+)\s*>$/);
       if (closing) {
+        account(closing[1].length + 3);
         if (stack.length === 1 || stack.at(-1).name !== closing[1].toLowerCase().split(':').at(-1)) incomplete('Thẻ đóng không khớp');
         stack.pop(); continue;
       }
       const open = part.match(/^<([\w:-]+)([\s\S]*?)\/?\s*>$/);
       if (!open) incomplete('Thẻ bị cắt');
+      const name = open[1].toLowerCase().split(':').at(-1);
+      const inMath = !contentOnly || name === 'math' || stack.some(node => node.name === 'math');
       const attrs = {};
-      for (const match of open[2].matchAll(/([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) attrs[match[1].toLowerCase()] = decode(match[2] ?? match[3]);
-      const node = { name: open[1].toLowerCase().split(':').at(-1), attrs, nodes: [], source: part };
+      // HTML media and layout attributes are not mathematical source. Image
+      // collection uses the untouched HTML/DOM separately; MathML attributes
+      // and original TeX remain intact, including unsupported syntax.
+      if (inMath || name !== 'img') {
+        for (const attr of open[2].matchAll(/([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) {
+          const key = attr[1].toLowerCase();
+          if (inMath || ['data-latex', 'type'].includes(key)) attrs[key] = decode(attr[2] ?? attr[3]);
+        }
+      }
+      if (contentOnly && !inMath && (['svg', 'style'].includes(name) || name === 'script' && !/^math\/tex/.test(attrs.type || ''))) {
+        if (!/\/\s*>$/.test(part)) { skipped = name; skipDepth = 1; }
+        continue;
+      }
+      account(name.length + 2 + JSON.stringify(attrs).length);
+      const node = { name, attrs, nodes: [] };
       stack.at(-1).nodes.push(node);
       if (!/\/\s*>$/.test(part) && !['br', 'img', 'hr', 'input', 'meta', 'link', 'wbr'].includes(node.name)) stack.push(node);
       if (stack.length > 128) fail('Nội dung lồng quá sâu');
     }
-    if (stack.length !== 1) incomplete('Thẻ chưa đóng');
+    if (stack.length !== 1 || skipped) incomplete('Thẻ chưa đóng');
     return root;
   }
   const xmlText = node => typeof node === 'string' ? node : node.nodes.map(xmlText).join('');
@@ -528,7 +556,7 @@
       if (input && typeof input === 'object' && typeof input.outerHTML !== 'string') fail('Đối tượng nội dung công thức không hợp lệ');
       source = input?.outerHTML ?? String(input ?? '');
       if (/<(?:math\b|mjx-|[A-Za-z][\w:-]*(?:\s|>))/i.test(source)) {
-        const tree = markup(source);
+        const tree = markup(source, true);
         const proseDocument = /<(?:p|div|li|br)\b/i.test(source);
         let pending = '', lineHasMath = false;
         const append = value => {

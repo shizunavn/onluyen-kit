@@ -23,6 +23,8 @@ Xuất prompt dùng nguồn văn bản, LaTeX và MathML, độc lập với b�
 
 Prompt dài được chia theo câu, dùng chung `snapshot_id`. Nếu có nhiều phần, tiện ích lưu các file `OnluyenKit-prompt-N.txt` vào Downloads và sao chép phần đầu. Gửi từng phần cho AI rồi gộp các mảng JSON trước khi nạp. CLI/Gemini xử lý các phần lần lượt. Một câu riêng vượt giới hạn sẽ được báo rõ, không cắt nội dung.
 
+Ảnh base64 và SVG dựng công thức không được tính vào giới hạn đọc văn bản/công thức. Ảnh được thu riêng; LaTeX và MathML gốc vẫn giữ trong prompt. Một câu ngắn có ảnh lớn sẽ không bị báo quá dài chỉ vì dữ liệu ảnh.
+
 Trước khi tự điền, tiện ích đọc và kiểm tra toàn bộ đề. Nếu API thiếu câu, nó mở từng câu bằng thanh điều hướng rồi trở về câu ban đầu, chưa chọn đáp án. Một lỗi ở bất kỳ câu nào sẽ chặn cả lượt tự điền và giữ database cũ. Trang luyện tập không cho đọc trước đủ đề sẽ được báo rõ thay vì trả lời để mở câu tiếp theo.
 
 Trong cùng tab và bài làm, tạo prompt, nạp database và tự điền dùng chung bản đề đã đọc. Bấm **Bắt đầu Tự Điền** có thể nạp luôn JSON trong ô; không cần nạp riêng trước. JSON đã xác minh không bị kiểm tra toàn đề lần nữa. Chuyển bài, thay nguồn API, số câu hoặc nội dung đang hiển thị làm mất hiệu lực bản lưu. Trước mỗi lần chọn/lưu đáp án, bot vẫn kiểm tra câu trên giao diện.
