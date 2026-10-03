@@ -351,6 +351,11 @@
         for (const attr of open[2].matchAll(/([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) {
           const key = attr[1].toLowerCase();
           if (inMath || ['data-latex', 'type'].includes(key)) attrs[key] = decode(attr[2] ?? attr[3]);
+          else if (key === 'class') {
+            const responseClasses = decode(attr[2] ?? attr[3]).split(/\s+/)
+              .filter(value => value === 'answer-input' || /^ans-span(?:-[\w-]+)?$/.test(value));
+            if (responseClasses.length) attrs.class = responseClasses.join(' ');
+          }
         }
       }
       if (contentOnly && !inMath && (['svg', 'style'].includes(name) || name === 'script' && !/^math\/tex/.test(attrs.type || ''))) {
@@ -622,8 +627,15 @@
           }
           flush(); segments.push({ format, raw }); lineHasMath = true;
         };
-        const walk = node => {
+        const walk = (node, inAnswerArea = false) => {
           if (typeof node === 'string') { append(node); return; }
+          const classes = (node.attrs.class || '').split(/\s+/);
+          const answerArea = inAnswerArea || classes.includes('answer-input');
+          // MathPlay mirrors a typed answer into ans-span/ans-span-second
+          // inside question-name. Response state is not part of the question;
+          // keep surrounding instructions, labels and units as source content.
+          if (['input', 'textarea', 'select', 'button'].includes(node.name)
+              || answerArea && classes.some(name => /^ans-span(?:-[\w-]+)?$/.test(name))) return;
           if (node.name === 'script' && /^math\/tex/.test(node.attrs.type || '')) {
             emitMath('latex', xmlText(node)); return;
           }
@@ -642,12 +654,12 @@
             const findMath = n => typeof n === 'string' ? null : n.name === 'math' ? n : n.nodes.map(findMath).find(Boolean);
             const math = findMath(node);
             if (node.attrs['data-latex']) emitMath('latex', node.attrs['data-latex']);
-            else if (math) walk(math);
+            else if (math) walk(math, answerArea);
             else incomplete('MathJax chưa render: chưa có MathML/LaTeX gốc');
             return;
           }
           if (['p', 'div', 'br', 'li'].includes(node.name)) append('\n');
-          node.nodes.forEach(walk);
+          node.nodes.forEach(child => walk(child, answerArea));
           if (['p', 'div', 'li'].includes(node.name)) append('\n');
         };
         walk(tree); flush();

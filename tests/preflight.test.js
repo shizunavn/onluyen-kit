@@ -47,8 +47,19 @@ async function mount(browser, mode = {}) {
       const updateButton = () => { if (n !== 1 || !mode.keepSkip) root.querySelector('button').innerText = 'TRẢ LỜI'; };
       if (n === 1 && mode.type === 'SHORT') {
         root.querySelectorAll('.question-option').forEach(el => el.remove());
-        root.querySelector('.question-name').insertAdjacentHTML('afterend', `<div class="answer-input"><input type="text" value="${mode.preset === 'correct' ? '-2,5' : mode.preset === 'wrong' ? '99' : ''}"></div>`);
-        root.querySelector('.answer-input input').addEventListener('input', e => { __fills++; if (mode.refuseChange) e.target.value = '99'; else updateButton(); });
+        const answerArea = `<div class="answer-input"><div class="line">Đáp án: <span class="ans-span-second"></span><input class="can-resize-second" type="text" value="${mode.preset === 'correct' ? '-2,5' : mode.preset === 'wrong' ? '99' : ''}"><span class="answer-unit"><math><mi>m</mi></math></span></div></div>`;
+        root.querySelector('.question-name').insertAdjacentHTML(mode.inlineShort ? 'beforeend' : 'afterend', answerArea);
+        if (mode.inlineShort) root.querySelector('.question-name').append(root.querySelector('.submit-bar'));
+        const mirror = value => { root.querySelector('.ans-span-second').innerHTML = mode.mathMirror
+          ? `<mjx-container><mjx-assistive-mml><math><mn>${value}</mn></math></mjx-assistive-mml></mjx-container>` : value; };
+        if (mode.inlineShort && mode.preset) mirror(root.querySelector('.answer-input input').value);
+        root.querySelector('.answer-input input').addEventListener('input', e => {
+          __fills++; if (mode.refuseChange) e.target.value = '99'; else updateButton();
+          if (mode.inlineShort) mirror(e.target.value);
+          if (mode.changeAfterFill === 'prompt') root.querySelector('.question-name').firstChild.textContent = 'Đề đã đổi.';
+          if (mode.changeAfterFill === 'id') root.querySelector('.question-info .num span').textContent = '#11111';
+          if (mode.changeAfterFill === 'unit') root.querySelector('.answer-unit mi').textContent = 'cm';
+        });
       } else if (n === 1 && mode.type === 'TF') {
         root.querySelectorAll('.question-option').forEach((el, i) => {
           el.outerHTML = `<div class="child-content"><span class="option-text"><span class="option-char">${i ? 'b' : 'a'})</span><span class="fadein">${__texts[0][i]}</span></span><div class="true-false"><input type="radio" name="tf-${i}" value="true" ${!i && mode.preset ? 'checked' : ''}><input type="radio" name="tf-${i}" value="false" ${i && mode.preset === 'correct' ? 'checked' : ''}></div></div>`;
@@ -230,6 +241,37 @@ async function installApiDelivery(page) {
       assert.deepEqual(await skipPage.evaluate(() => [__skips, __clicks, __fills, __submits]), [1, firstClicks + 1, fills, 2], `${type} ${preset || 'fresh'}: matching answer advances with Skip, then fills the next question`);
       assert.deepEqual(await skipPage.evaluate(() => __messages.filter(m => m.action === 'BOT_ERROR')), []);
       await skipPage.close();
+    }
+    // MathPlay nests both the mirrored response and the changing completion
+    // button inside question-name, unlike the older short-answer fixture.
+    for (const mode of [
+      { keepSkip: false }, { keepSkip: true }, { keepSkip: false, mathMirror: true },
+      { keepSkip: true, preset: 'correct' }
+    ]) {
+      const inline = await mount(browser, { type: 'SHORT', inlineShort: true, ...mode });
+      const first = { cau: 1, id: '12905165', loai: 'SHORT', dap_an: mode.preset ? '-2,5' : '2027' };
+      const before = await send(inline, { action: 'OL_GET_AI_PROMPT' });
+      assert.equal(before.ok, true, before.error);
+      const token = before.prompt.match(/snapshot_id: ([a-f0-9]+)/)[1];
+      assert.doesNotMatch(before.prompt, /2027|-2,5|BỎ QUA|TRẢ LỜI/);
+      assert.equal((await send(inline, { action: 'OL_START_BOT', json: [first, answers[1]] })).ok, true);
+      await inline.waitForFunction(() => !window.__BOT_RUNNING__);
+      assert.deepEqual(await inline.evaluate(() => [__fills, __clicks, __submits, __skips]),
+        [mode.preset ? 0 : 1, 1, 2, mode.keepSkip ? 1 : 0], 'Mirrored answer and button label changes must not invalidate the checked source');
+      assert.deepEqual(await inline.evaluate(() => __messages.filter(m => m.action === 'BOT_ERROR')), []);
+      const after = await send(inline, { action: 'OL_GET_AI_PROMPT' });
+      assert.ok(after.prompt.includes(token), 'Filling the answer retains the prompt snapshot');
+      assert.equal(await inline.evaluate(() => __navigation), 2, 'Filling and reusing the prompt do not rescan the exam');
+      await inline.close();
+    }
+    for (const changeAfterFill of ['prompt', 'id', 'unit']) {
+      const changedShort = await mount(browser, { type: 'SHORT', inlineShort: true, changeAfterFill });
+      const first = { cau: 1, id: '12905165', loai: 'SHORT', dap_an: '2027' };
+      assert.equal((await send(changedShort, { action: 'OL_START_BOT', json: [first, answers[1]] })).ok, true);
+      await changedShort.waitForFunction(() => !window.__BOT_RUNNING__);
+      assert.deepEqual(await changedShort.evaluate(() => [__fills, __clicks, __submits]), [1, 0, 0], 'Real source changes after filling still prevent submission');
+      assert.ok(await changedShort.evaluate(() => __messages.some(m => m.action === 'BOT_ERROR')));
+      await changedShort.close();
     }
     for (const mode of [{ type: 'MCQ', preset: 'multiple' }, { type: 'SHORT', preset: 'wrong', refuseChange: true }]) {
       const blockedSkip = await mount(browser, { ...mode, keepSkip: true });

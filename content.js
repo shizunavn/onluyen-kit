@@ -1270,6 +1270,14 @@
     const inputValue = String(input?.value || input?.getAttribute('value') || '').trim();
     if (inputValue) return inputValue.replace(/[−–—﹣－]/g, '-');
 
+    // Some History renderers retain only the response mirror, not an input.
+    // Read it explicitly: question-source collection excludes response state.
+    const mirror = root.querySelector('.answer-input .ans-span-second, .answer-input .ans-span');
+    const mirrorValue = semanticElementText(mirror);
+    if (/^[+\-−–—﹣－]?\d+(?:[,.]\d+)?(?:[eE][+\-]?\d+)?$/.test(mirrorValue)) {
+      return mirrorValue.replace(/[−–—﹣－]/g, '-');
+    }
+
     const text = semanticElementText(root);
     const match = text.match(/(?:Đáp án|Câu trả lời)\s*:\s*([+\-−–—﹣－]?\d+(?:[,.]\d+)?(?:[eE][+\-]?\d+)?)/i);
     return match?.[1]?.replace(/[−–—﹣－]/g, '-') || null;

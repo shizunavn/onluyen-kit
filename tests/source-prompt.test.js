@@ -10,6 +10,18 @@ const cli = require('../cli/bulk-runner');
 const antennaHtml = fs.readFileSync(path.join(__dirname, 'fixtures/antenna-base64-question.html'), 'utf8');
 const antennaLarge = antennaHtml.replace('iVBORw0KGgo=', 'A'.repeat(265700));
 const antennaPrompt = math.toPromptContent(antennaHtml);
+// The response mirror is nested in the real question HTML. Filling it must
+// change neither prompt content nor source identity; the static unit remains.
+const filledAntenna = antennaHtml.replace('class="ans-span-second"></span>',
+  'class="ans-span-second"><mjx-container data-latex="2027"></mjx-container></span>')
+  .replace('autocomplete="off"', 'autocomplete="off" value="2027"') + '<button>TRẢ LỜI</button><textarea>2027</textarea>';
+assert.deepEqual(math.toPromptContent(filledAntenna), antennaPrompt);
+assert.equal(math.sourceFingerprint(filledAntenna), math.sourceFingerprint(antennaHtml));
+assert.ok(antennaPrompt.segments.some(s => s.format === 'mathml' && s.raw.includes('<mi>m</mi>')), 'The response unit is question source');
+assert.notEqual(math.sourceFingerprint(filledAntenna.replace('<mi>m</mi>', '<mi>c</mi><mi>m</mi>')), math.sourceFingerprint(antennaHtml));
+assert.notEqual(math.sourceFingerprint(filledAntenna.replace('Chiều cao', 'Chiều rộng')), math.sourceFingerprint(antennaHtml));
+const unknownMirror = antennaHtml.replace('class="ans-span-second"></span>', 'class="ans-span-second"><mjx-container><svg></svg></mjx-container></span>');
+assert.deepEqual(math.toPromptContent(unknownMirror), antennaPrompt, 'An unrendered response mirror is not an unrendered question');
 assert.ok(antennaLarge.length > 262144);
 assert.equal(antennaPrompt.ok, true);
 assert.deepEqual(math.toPromptContent(antennaLarge), antennaPrompt, 'Media bytes never consume the text/math budget');
@@ -70,6 +82,7 @@ const corpus = [content, unknown, other, `$${latex}$`,
   '<math><mrow><mn>1</mn><mn>2</mn></mrow></math>',
   '<mjx-container><svg><text>x</text></svg></mjx-container>', antennaLarge, multipleMedia, sourceWithMedia];
 corpus.push(`Texte ${unknown}`, `<div>\nTexte&nbsp;${unknown}\n</div>`);
+corpus.push(antennaHtml, filledAntenna, unknownMirror);
 const results = corpus.map(value => ({ prompt: math.toPromptContent(value), fingerprint: math.sourceFingerprint(value) }));
 const formatted = results[0].prompt;
 assert.equal(formatted.ok, true);

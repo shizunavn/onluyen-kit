@@ -31,6 +31,8 @@ Trong cùng tab và bài làm, tạo prompt, nạp database và tự điền dù
 
 API tải bổ sung trong lúc đọc hoặc lưu được đối chiếu với đề đã thu. Nếu dữ liệu bổ sung khớp, tiện ích giữ snapshot và dùng tiếp, không quét lại toàn đề. Thay wrapper, khoảng trắng hoặc định dạng công thức tương đương không được coi là đổi đề. ID, nội dung và thứ tự lựa chọn thực sự thay đổi vẫn làm mất hiệu lực bản kiểm tra.
 
+Với câu trả lời ngắn MathPlay, ô nhập, phần hiển thị lại đáp án và nút thao tác được tách khỏi nguồn đề. Điền đáp án hoặc đổi nút từ **Bỏ qua** sang **Trả lời** không làm hết hiệu lực snapshot. Hướng dẫn, công thức và đơn vị bên cạnh ô nhập vẫn được kiểm tra; History đọc đáp án riêng.
+
 Nếu đáp án đang chọn/điền khớp database nhưng nút vẫn là **Bỏ qua**, bot bấm nút đó để chuyển tiếp. Đúng/Sai phải khớp đủ tất cả các ý; ô trống hoặc nhiều lựa chọn đang chọn cùng lúc sẽ không được coi là hoàn thành.
 
 **Kiểm tra toàn bộ đề** đọc lại đề và kiểm tra JSON trong ô mà không thay database; dùng nút này khi muốn kiểm tra lại cả những câu chưa mở sau khi đề thay đổi. **Xuất báo cáo lỗi** tải báo cáo JSON cục bộ, gồm số câu, ID, nguồn công thức và phần không khớp. Bạn có thể gửi file này cùng cách tái hiện qua Feedback; tiện ích không tự gửi báo cáo.

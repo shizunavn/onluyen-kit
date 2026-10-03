@@ -1531,17 +1531,23 @@ function trueFalseRow(key, text, token) {
         <div class="question-header">C\u00e2u 5 | #9005</div>
         <div class="student-answer">Đáp án: 0,03</div>
         <div class="hint-content">Giải đáp câu trả lời ngắn.</div>
+      </div>
+      <div id="ans-student-5" class="question-content correct-wrong">
+        <div class="question-header">C\u00e2u 6 | #9006</div>
+        <div class="question-name">Tính giá trị lớn nhất.<div class="answer-input">Đáp án: <span class="ans-span-second">2027</span></div></div>
+        <div class="hint-content">Giải đáp câu trả lời ngắn.</div>
       </div>`);
     const historyResult = await send(historyPage, { action: 'OL_GET_HISTORY_ANSWERS' });
     assert.equal(historyResult.ok, true);
-    assert.equal(historyResult.count, 5);
+    assert.equal(historyResult.count, 6);
     assert.ok(historyResult.answers[0].math_content.answer.segments.length);
     assert.deepEqual(historyResult.answers.map(({ math_content, ...answer }) => answer), [
       { cau: 1, id: '9001', loai: 'MCQ', dap_an: 'D', noi_dung_dap_an: 'Semantic answer' },
       { cau: 2, id: '9002', loai: 'TF', dap_an: { a: '\u0110\u00fang', b: 'Sai', c: 'Sai', d: '\u0110\u00fang' } },
       { cau: 3, id: '9003', loai: 'SHORT', dap_an: '1,44', noi_dung_cau_hoi: 'Điền đáp án thích hợp vào ô trống' },
       { cau: 4, id: '9004', loai: 'SHORT', dap_an: '-2,5' },
-      { cau: 5, id: '9005', loai: 'SHORT', dap_an: '0,03' }
+      { cau: 5, id: '9005', loai: 'SHORT', dap_an: '0,03' },
+      { cau: 6, id: '9006', loai: 'SHORT', dap_an: '2027', noi_dung_cau_hoi: 'Tính giá trị lớn nhất.\nĐáp án:' }
     ]);
     assert.deepEqual(JSON.parse(historyResult.json), historyResult.answers);
     await historyPage.close();
