@@ -27,6 +27,8 @@ Prompt dài được chia theo câu, dùng chung `snapshot_id`. Nếu có nhiề
 
 Trước khi tự điền, tiện ích đọc và kiểm tra toàn bộ đề. Nếu API thiếu câu, nó mở từng câu bằng thanh điều hướng rồi trở về câu ban đầu, chưa chọn đáp án. Một lỗi ở bất kỳ câu nào sẽ chặn cả lượt tự điền và giữ database cũ. Trang luyện tập không cho đọc trước đủ đề sẽ được báo rõ thay vì trả lời để mở câu tiếp theo.
 
+Số câu và nút chuyển câu được lấy từ các ô trên phiếu trả lời. Các số trong đề, công thức, bộ đếm hoặc thanh điều hướng khác không được tính là câu hỏi, kể cả khi toàn trang có class `sidebar-fixed`.
+
 Trong cùng tab và bài làm, tạo prompt, nạp database và tự điền dùng chung bản đề đã đọc. Bấm **Bắt đầu Tự Điền** có thể nạp luôn JSON trong ô; không cần nạp riêng trước. JSON đã xác minh không bị kiểm tra toàn đề lần nữa. Chuyển bài, thay nguồn API, số câu hoặc nội dung đang hiển thị làm mất hiệu lực bản lưu. Trước mỗi lần chọn/lưu đáp án, bot vẫn kiểm tra câu trên giao diện.
 
 API tải bổ sung trong lúc đọc hoặc lưu được đối chiếu với đề đã thu. Nếu dữ liệu bổ sung khớp, tiện ích giữ snapshot và dùng tiếp, không quét lại toàn đề. Thay wrapper, khoảng trắng hoặc định dạng công thức tương đương không được coi là đổi đề. ID, nội dung và thứ tự lựa chọn thực sự thay đổi vẫn làm mất hiệu lực bản kiểm tra.

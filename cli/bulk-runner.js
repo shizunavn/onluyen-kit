@@ -870,7 +870,7 @@ async function collectDomQuestion(page) {
 
 async function collectQuestionsFromDom(page) {
   const numbers = await page.evaluate(() => {
-    const selectors = '.answer-sheet .option, app-sidebar-school-test .option, [class*="sidebar"] span, [class*="sidebar"] button';
+    const selectors = '.answer-sheet .option, app-sidebar-school-test .option';
     return [...new Set(Array.from(document.querySelectorAll(selectors))
       .filter(element => /^\d+$/.test((element.innerText || '').trim()))
       .map(element => Number(element.innerText.trim())))]
@@ -881,7 +881,7 @@ async function collectQuestionsFromDom(page) {
   const questions = [];
   for (const number of targets) {
     await page.evaluate(targetNumber => {
-      const candidates = Array.from(document.querySelectorAll('.answer-sheet .option, app-sidebar-school-test .option, [class*="sidebar"] span, [class*="sidebar"] button'));
+      const candidates = Array.from(document.querySelectorAll('.answer-sheet .option, app-sidebar-school-test .option'));
       candidates.find(element => (element.innerText || '').trim() === String(targetNumber))?.click();
     }, number);
     await page.waitForFunction(expected => {
@@ -896,7 +896,7 @@ async function collectQuestionsFromDom(page) {
 
 async function domQuestionCount(page) {
   return page.evaluate(() => {
-    const selectors = '.answer-sheet .option, app-sidebar-school-test .option, [class*="sidebar"] span, [class*="sidebar"] button';
+    const selectors = '.answer-sheet .option, app-sidebar-school-test .option';
     const numbers = [...new Set(Array.from(document.querySelectorAll(selectors))
       .filter(element => /^\d+$/.test((element.innerText || '').trim()))
       .map(element => Number(element.innerText.trim())))]

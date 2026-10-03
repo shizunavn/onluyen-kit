@@ -302,6 +302,10 @@ assert.deepEqual(shuffledTf.matched[0].noi_dung_cac_y, {
         <div class="question-option"><span class="question-option-label">B</span><div class="question-option-content">One B</div></div>
       </div></div>`);
     await page.evaluate(() => {
+      document.body.className = 'app header-fixed sidebar-fixed';
+      document.body.insertAdjacentHTML('beforeend', '<div class="sidebar-status"><span>15</span><button>50</button></div>');
+      window.__wrongNavigation = 0;
+      document.querySelector('.sidebar-status button').onclick = () => __wrongNavigation++;
       window.__ONLUYEN_CACHED_QUESTIONS__ = [{
         dataStandard: {
           stepIndex: 0,
@@ -323,6 +327,7 @@ assert.deepEqual(shuffledTf.matched[0].noi_dung_cac_y, {
     const lazyQuestions = await getQuestions(page);
     assert.equal(lazyQuestions.length, 2, 'CLI phải bỏ qua API chưa đủ và đọc từng câu trong phiếu trả lời');
     assert.deepEqual(lazyQuestions.map(question => question.sourceId), ['101', '102']);
+    assert.equal(await page.evaluate(() => __wrongNavigation), 0, 'CLI does not treat numbers under body.sidebar-fixed as navigation');
   } finally {
     await browser.close();
     await new Promise(resolve => server.close(resolve));

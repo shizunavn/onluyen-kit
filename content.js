@@ -165,7 +165,7 @@
 
   const SKIP_SELECTORS = [
     'script', 'style', 'noscript', 'svg', 'nav', 'footer',
-    '[aria-hidden="true"]', '.sidebar', '[class*="sidebar"]',
+    '[aria-hidden="true"]', '.sidebar', 'app-sidebar-school-test', '.answer-sheet',
     '[class*="breadcrumb"]', '[class*="chat"]'
   ].join(',');
 
@@ -516,9 +516,16 @@
       && question.choices.every(choice => math.toPromptContent(choice.math_content || choice.text).ok || choice.images?.length));
   }
 
+  function questionNavigationOptions() {
+    // The real page has body.sidebar-fixed. A substring selector for sidebar
+    // would therefore treat every number in the question as navigation.
+    // Collection and clicking must use the same explicit answer-sheet options.
+    return [...document.querySelectorAll('.answer-sheet .option, app-sidebar-school-test .option')]
+      .filter(isVisible).filter(el => /^[1-9]\d*$/.test(cleanText(el.innerText)));
+  }
+
   function sidebarQuestionNumbers() {
-    return [...new Set([...document.querySelectorAll('.answer-sheet .option, app-sidebar-school-test .option, [class*="sidebar"] span, [class*="sidebar"] button')]
-      .filter(isVisible).map(el => cleanText(el.innerText)).filter(t => /^\d+$/.test(t)).map(Number))].sort((a, b) => a - b);
+    return [...new Set(questionNavigationOptions().map(el => Number(cleanText(el.innerText))))].sort((a, b) => a - b);
   }
 
   function expectedExamTotal(questions) {
@@ -1622,24 +1629,7 @@
   }
 
   function findSidebarButtonForQuestion(qNumber) {
-    // Tìm trong thanh số câu bên trái của Onluyen
-    const candidates = Array.from(document.querySelectorAll(
-      '.answer-sheet .option, app-sidebar-school-test .option, .sidebar span, .sidebar button, .sidebar div, [class*="sidebar"] span, app-school-test-full-layout span'
-    ));
-    for (const el of candidates) {
-      const text = el.innerText.trim();
-      if (text === String(qNumber) && el.offsetWidth > 0 && el.offsetHeight > 0) {
-        return el;
-      }
-    }
-    // Tìm theo class số câu thông dụng trên phiếu trả lời
-    const allSpans = Array.from(document.querySelectorAll('span, button, a'));
-    for (const el of allSpans) {
-      if (el.innerText.trim() === String(qNumber) && el.closest('.sidebar, [class*="nav"], [class*="list"], [class*="stepper"]')) {
-        return el;
-      }
-    }
-    return null;
+    return questionNavigationOptions().find(el => cleanText(el.innerText) === String(qNumber)) || null;
   }
 
   function currentQuestionNumber() {

@@ -124,6 +124,48 @@ async function installApiDelivery(page) {
   try {
     const page = await mount(browser);
     const answers = [entry, { cau: 2, id: '9999', loai: 'MCQ', dap_an: 'A', noi_dung_dap_an: 'Đáp án cuối.' }];
+    const sidebarPage = await mount(browser);
+    await sidebarPage.setContent(fs.readFileSync(path.join(__dirname, 'fixtures/sidebar-fixed-navigation.html'), 'utf8'));
+    await sidebarPage.evaluate(() => {
+      const root = document.querySelector('.question-container');
+      const questionSource = root.querySelector('.question-name').outerHTML;
+      window.__nonNavigationClicks = 0;
+      window.__render = n => {
+        root.innerHTML = `<div class="question-info"><div class="num">Câu: ${n} #${n === 10 ? '13535732' : n === 11 ? '13535721' : 8000 + n}</div></div>${questionSource}<div class="submit-bar"><button>BỎ QUA</button></div>`;
+        root.querySelectorAll('.question-name span').forEach(el => el.onclick = () => __nonNavigationClicks++);
+        root.querySelector('input').oninput = e => {
+          __fills++; root.querySelector('.ans-span-second').textContent = e.target.value;
+          root.querySelector('.submit-bar button').textContent = 'TRẢ LỜI';
+        };
+        root.querySelector('.submit-bar button').onclick = () => {
+          __submits++; if (n < 11) __render(n + 1); else root.querySelector('.submit-bar button').textContent = 'KẾT THÚC';
+        };
+      };
+      document.querySelectorAll('.answer-sheet .option').forEach(el => el.onclick = () => { __navigation++; __render(Number(el.textContent)); });
+      document.querySelector('.sidebar-nav button').onclick = () => __nonNavigationClicks++;
+      __render(10);
+    });
+    const sidebarPrompt = await send(sidebarPage, { action: 'OL_GET_AI_PROMPT' });
+    assert.equal(sidebarPrompt.ok, true, sidebarPrompt.error);
+    assert.equal(sidebarPrompt.count, 11, 'Only the eleven answer-sheet options are question numbers');
+    assert.equal(await sidebarPage.$eval('.question-info .num', el => el.textContent), 'Câu: 10 #13535732', 'Collection returns to the originally open question');
+    assert.deepEqual(await sidebarPage.evaluate(() => [__navigation, __nonNavigationClicks, __fills, __submits]), [12, 0, 0, 0]);
+    const sidebarAnswers = Array.from({ length: 11 }, (_, i) => ({ cau: i + 1,
+      id: String(i === 9 ? 13535732 : i === 10 ? 13535721 : 8001 + i), loai: 'SHORT', dap_an: '2027' }));
+    const sidebarLoaded = await send(sidebarPage, { action: 'OL_LOAD_DATABASE', json: sidebarAnswers });
+    assert.equal(sidebarLoaded.ok, true, sidebarLoaded.error);
+    assert.equal((await send(sidebarPage, { action: 'OL_START_BOT' })).ok, true);
+    await sidebarPage.waitForFunction(() => !window.__BOT_RUNNING__);
+    assert.deepEqual(await sidebarPage.evaluate(() => [__navigation, __nonNavigationClicks, __fills, __submits]), [13, 0, 11, 11],
+      'Prompt/import/start reuse one scan and never click numbers in the question, report or unrelated navigation');
+    assert.deepEqual(await sidebarPage.evaluate(() => __messages.filter(m => m.action === 'BOT_ERROR')), []);
+    await sidebarPage.close();
+    const genericSidebar = await mount(browser);
+    await genericSidebar.setContent('<div class="question">Nội dung câu hỏi ngoài phiếu trả lời.</div><app-sidebar-school-test><div class="question">Nội dung thanh điều hướng không phải đề.</div></app-sidebar-school-test>');
+    await genericSidebar.evaluate(() => { document.body.className = 'app sidebar-fixed'; });
+    assert.equal((await send(genericSidebar, { action: 'OL_PING' })).qCount, 1,
+      'The generic scraper excludes the actual sidebar, not the entire page with body.sidebar-fixed');
+    await genericSidebar.close();
     for (const timing of ['reading', 'restoring']) {
       const delivery = await mount(browser);
       await installApiDelivery(delivery);

@@ -155,6 +155,8 @@ async function mount(browser) {
   await page.goto('https://app.onluyen.vn/school/test/step/source-fixture');
   await page.setContent('<div class="answer-sheet"><button class="option">1</button><button class="option">2</button></div><div id="test-step-question"><div class="question-container"></div></div>');
   await page.evaluate(({ unknown, other }) => {
+    document.body.className = 'app header-fixed sidebar-fixed';
+    document.body.insertAdjacentHTML('beforeend', '<div class="sidebar-status"><span>15</span><button>50</button></div>');
     window.__store = {}; window.__messages = []; window.__clicks = 0; window.__submits = 0; window.__reads = 0;
     window.__sources = [[unknown, 'x+1'], [other, 'x+2']];
     window.__render = n => {
