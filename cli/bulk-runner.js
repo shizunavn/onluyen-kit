@@ -132,7 +132,7 @@ function readLinks(filePath) {
 }
 
 function testIdFromUrl(url) {
-  return new URL(url).pathname.match(/\/school\/test\/(?:history\/)?([^/?#]+)/i)?.[1] || null;
+  return new URL(url).pathname.match(/\/school\/test\/(?:(?:step|docx|history|result)\/)?([^/?#]+)/i)?.[1] || null;
 }
 
 function historyUrlForTest(url) {
@@ -782,7 +782,7 @@ async function login(page, credentialState) {
 async function enterTest(page) {
   try {
     await page.waitForFunction(() => {
-      if (document.querySelector('#test-step-question, app-practice-step-question-option, app-practice-step-question-true-false')) return true;
+      if (document.querySelector('#test-step-question, app-practice-step-question-option, app-practice-step-question-true-false, .sections > .question[id]')) return true;
       return Array.from(document.querySelectorAll('button, a, [role="button"], .btn-test')).some(element =>
         /^(làm bài|bắt đầu|bắt đầu làm bài|tiếp tục|tiếp tục làm bài|vào làm|làm lại)$/i.test((element.innerText || '').replace(/\s+/g, ' ').trim())
       );
@@ -790,7 +790,7 @@ async function enterTest(page) {
   } catch (_error) {}
 
   for (let attempt = 0; attempt < 4; attempt++) {
-    if (await page.$('#test-step-question, app-practice-step-question-option, app-practice-step-question-true-false')) return;
+    if (await page.$('#test-step-question, app-practice-step-question-option, app-practice-step-question-true-false, .sections > .question[id]')) return;
     const clicked = await page.evaluate(() => {
       const candidates = Array.from(document.querySelectorAll('button, a, [role="button"], .btn-test'));
       const target = candidates.find(element => {
@@ -817,10 +817,10 @@ async function enterTest(page) {
       confirm?.click();
     });
     try {
-      await page.waitForSelector('#test-step-question, app-practice-step-question-option, app-practice-step-question-true-false', { timeout: 12000 });
+      await page.waitForSelector('#test-step-question, app-practice-step-question-option, app-practice-step-question-true-false, .sections > .question[id]', { timeout: 12000 });
     } catch (_error) {}
   }
-  if (!await page.$('#test-step-question, app-practice-step-question-option, app-practice-step-question-true-false')) {
+  if (!await page.$('#test-step-question, app-practice-step-question-option, app-practice-step-question-true-false, .sections > .question[id]')) {
     throw new Error('Link chưa mở được giao diện làm bài. Hãy dùng link bài test hoặc link /school/test/step/.');
   }
 }
@@ -1045,7 +1045,7 @@ async function inspectTestStatus(page) {
     await page.waitForFunction(() => {
       const text = document.body?.innerText || '';
       return /Bài tập đã được hoàn thành|Điểm số/i.test(text)
-        || !!document.querySelector('#test-step-question, app-practice-step-question-option, app-practice-step-question-true-false, .btn-test');
+        || !!document.querySelector('#test-step-question, app-practice-step-question-option, app-practice-step-question-true-false, .sections > .question[id], .btn-test');
     }, { timeout: 15000 });
   } catch (_error) {}
   return page.evaluate(() => {

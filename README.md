@@ -29,13 +29,17 @@ Trước khi tự điền, tiện ích đọc và kiểm tra toàn bộ đề. N
 
 Số câu và nút chuyển câu được lấy từ các ô trên phiếu trả lời. Các số trong đề, công thức, bộ đếm hoặc thanh điều hướng khác không được tính là câu hỏi, kể cả khi toàn trang có class `sidebar-fixed`.
 
+Đề DOCX ở đường dẫn `/school/test/docx/…` được đọc trực tiếp từ các câu trong trang, gồm MCQ và Đúng/Sai. Số câu được kiểm tra với API và phiếu trả lời. Bot dùng ID của từng câu để điền, bấm đúng nút lựa chọn và chờ trạng thái `active` cùng xác nhận đã làm trên phiếu. Dạng này lưu khi chọn, không cần nút **Trả lời** hay chuyển từng câu; extension không tự bấm **Nộp bài**. CLI dùng cùng cách đọc và điền, vẫn nộp bài theo tùy chọn `--submit`.
+
 Trong cùng tab và bài làm, tạo prompt, nạp database và tự điền dùng chung bản đề đã đọc. Bấm **Bắt đầu Tự Điền** có thể nạp luôn JSON trong ô; không cần nạp riêng trước. JSON đã xác minh không bị kiểm tra toàn đề lần nữa. Chuyển bài, thay nguồn API, số câu hoặc nội dung đang hiển thị làm mất hiệu lực bản lưu. Trước mỗi lần chọn/lưu đáp án, bot vẫn kiểm tra câu trên giao diện.
 
 API tải bổ sung trong lúc đọc hoặc lưu được đối chiếu với đề đã thu. Nếu dữ liệu bổ sung khớp, tiện ích giữ snapshot và dùng tiếp, không quét lại toàn đề. Thay wrapper, khoảng trắng hoặc định dạng công thức tương đương không được coi là đổi đề. ID, nội dung và thứ tự lựa chọn thực sự thay đổi vẫn làm mất hiệu lực bản kiểm tra.
 
 Với câu trả lời ngắn MathPlay, ô nhập, phần hiển thị lại đáp án và nút thao tác được tách khỏi nguồn đề. Điền đáp án hoặc đổi nút từ **Bỏ qua** sang **Trả lời** không làm hết hiệu lực snapshot. Hướng dẫn, công thức và đơn vị bên cạnh ô nhập vẫn được kiểm tra; History đọc đáp án riêng.
 
-Nếu đáp án đang chọn/điền khớp database nhưng nút vẫn là **Bỏ qua**, bot bấm nút đó để chuyển tiếp. Đúng/Sai phải khớp đủ tất cả các ý; ô trống hoặc nhiều lựa chọn đang chọn cùng lúc sẽ không được coi là hoàn thành.
+Nếu đáp án đang chọn khớp database nhưng nút vẫn là **Bỏ qua**, bot có thể bấm để chuyển tiếp. Đúng/Sai phải khớp đủ tất cả các ý; ô trống hoặc nhiều lựa chọn đang chọn cùng lúc sẽ không được coi là hoàn thành.
+
+Câu trả lời ngắn được nhập qua cơ chế chỉnh sửa của trình duyệt để MathPlay ghi nhận giá trị. Giá trị xuất hiện trong ô chưa đủ để coi là đã lưu: bot chờ **Trả lời**, hoặc chỉ dùng **Bỏ qua** khi phiếu trả lời xác nhận câu đã làm và đáp án khớp. Sau khi bấm lưu, nếu phiếu vẫn đánh dấu chưa làm thì bot dừng, dù trang đã chuyển câu. Sửa một đáp án đã lưu cũng cần xác nhận giá trị mới; trạng thái đã làm của đáp án cũ không được dùng thay thế.
 
 **Kiểm tra toàn bộ đề** đọc lại đề và kiểm tra JSON trong ô mà không thay database; dùng nút này khi muốn kiểm tra lại cả những câu chưa mở sau khi đề thay đổi. **Xuất báo cáo lỗi** tải báo cáo JSON cục bộ, gồm số câu, ID, nguồn công thức và phần không khớp. Bạn có thể gửi file này cùng cách tái hiện qua Feedback; tiện ích không tự gửi báo cáo.
 

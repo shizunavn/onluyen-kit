@@ -3,6 +3,7 @@
   window.__ONLUYEN_STUDY_HELPER__ = true;
   const math = globalThis.OnluyenMath;
   if (!math) throw new Error('Thiếu math-content.js; hãy reload extension.');
+  const pendingShortInputs = new WeakMap();
 
   // ============================================================
   // 1. TIÊM INJECT.JS VÀO PAGE CONTEXT ĐỂ HOOK API ĐỀ THI
@@ -30,7 +31,7 @@
 
   function examStorageKey(url = location.href) {
     const path = new URL(url).pathname;
-    const match = path.match(/^\/school\/test\/(?:(?:step|history|result)\/)?([^/]+)/)
+    const match = path.match(/^\/school\/test\/(?:(?:step|docx|history|result)\/)?([^/]+)/)
       || path.match(/^\/practices\/([^/]+)/);
     return match ? `onluyen_saved_db:${match[1]}` : null;
   }
@@ -431,7 +432,45 @@
       : null;
   }
 
+  function docxQuestionRoots() {
+    return [...document.querySelectorAll('.sections > .question[id]')]
+      .filter(root => root.querySelector('app-docx-question-multiple-choice, app-docx-question-true-false-test'));
+  }
+
+  function isDocxExam() {
+    return /^\/school\/test\/docx\//.test(location.pathname) || docxQuestionRoots().length > 0;
+  }
+
+  function extractDocxQuestions() {
+    return docxQuestionRoots().filter(isVisible).map(root => {
+      const number = Number(cleanText(root.querySelector('.quetion-number, .question-number')?.innerText).match(/Câu\s*:?\s*(\d+)/i)?.[1]);
+      const promptElement = root.querySelector('.content-question');
+      const materials = [];
+      for (let previous = root.previousElementSibling; previous; previous = previous.previousElementSibling) {
+        if (previous.matches('.section-content')) materials.unshift(previous.querySelector('.section-text') || previous);
+        else if (materials.length && previous.matches('.question')) break;
+      }
+      const materialPrompt = materials.map(semanticElementText).filter(Boolean).join('\n');
+      const tf = !!root.querySelector('app-docx-question-true-false-test');
+      const choices = [...root.querySelectorAll('.options > .option')].map((option, index) => ({
+        label: tf ? normalizeSubQuestionKey(option.querySelector('.item-option')?.innerText, index)
+          : cleanText(option.querySelector('.item-answer')?.innerText),
+        text: semanticElementText(option.querySelector('.option-content')),
+        math_content: math.metadata(option.querySelector('.option-content')),
+        idOption: option.dataset.idOption,
+        images: choiceImages(option)
+      }));
+      return { number, sourceId: root.id, answerType: tf ? 'TF' : 'MCQ', origin: 'dom',
+        prompt: materialPrompt ? cleanText(`[Đoạn tư liệu: ${materialPrompt}]\n${semanticElementText(promptElement)}`) : semanticElementText(promptElement),
+        choices, expectedChoiceCount: 4,
+        math_content: { version: 1, question: materialPrompt
+          ? math.combine('[Đoạn tư liệu:', ...materials, ']', promptElement) : math.metadata(promptElement) },
+        images: uniqueImages([...materials.flatMap(choiceImages), ...choiceImages(promptElement || root), ...choices.flatMap(c => c.images)]) };
+    }).filter(q => q.number);
+  }
+
   function extractStructuredTestQuestions() {
+    if (isDocxExam()) return extractDocxQuestions();
     const roots = [...document.querySelectorAll([
       '#test-step-question .question-container',
       'app-practice-step-question-option',
@@ -486,6 +525,7 @@
 
   function getFullExamQuestions() {
     if (examSnapshot) return examSnapshot;
+    if (isDocxExam()) return extractDocxQuestions();
     // 1. Thử lấy từ API data trước (chuẩn 100% cả đề)
     const fromApi = parseQuestionsFromRawAPI();
     if (fromApi) return fromApi;
@@ -533,7 +573,9 @@
   }
 
   function examSourceContext() {
-    const questions = parseQuestionsFromRawAPI() || [];
+    // DOCX renders the complete exam in one document. The actual question
+    // nodes define its source/order; API delivery still supplies the count.
+    const questions = isDocxExam() ? extractDocxQuestions() : parseQuestionsFromRawAPI() || [];
     const sourceKey = value => math.toPromptContent(value).ok ? math.sourceFingerprint(value) : null;
     const images = values => [...new Set((values || []).map(i => i.src))];
     return JSON.stringify({ revision: examRevision, key: examStorageKey(),
@@ -630,6 +672,23 @@
       refreshExamSnapshot();
       const sourceContext = examSourceContext();
       const questions = getFullExamQuestions();
+      if (isDocxExam()) {
+        collectionCancelled = false;
+        const revision = examRevision, key = activeExamKey;
+        const deadline = Date.now() + 5000;
+        while (Date.now() < deadline) {
+          if (collectionCancelled || revision !== examRevision || key !== examStorageKey()) throw new Error('Đã hủy đọc hoặc chuyển bài DOCX.');
+          const rendered = extractDocxQuestions();
+          const expected = expectedExamTotal(rendered);
+          if (rendered.length && rendered.length === expected && rendered.every(hasCompleteChoices)) {
+            examSnapshot = rendered;
+            examSnapshotContext = examSourceContext();
+            return rendered;
+          }
+          await sleep(80);
+        }
+        throw Object.assign(new Error('Đề DOCX chưa render đủ câu hoặc lựa chọn; chưa bắt đầu tự điền.'), { code: 'SCRAPE_INCOMPLETE' });
+      }
       if (!window.__ONLUYEN_RAW_DATA__?.questions?.length && !sidebarQuestionNumbers().length
           && (/^\/practices(?:\/|$)/.test(location.pathname) || document.querySelector('app-practice-step-question-option, app-practice-step-question-true-false'))) {
         throw new Error('Không thể đọc trước toàn bộ đề luyện tập: không có API đầy đủ hoặc thanh điều hướng.');
@@ -1088,12 +1147,14 @@
   function optionAnswerText(option) {
     return semanticElementText(
       option?.querySelector('.question-option-content')
+      || option?.querySelector('.option-content')
       || option?.querySelector('label')
       || option
     );
   }
 
   function mcqOptionElements(root) {
+    if (root.matches?.('.sections > .question[id]')) return [...root.querySelectorAll('app-docx-question-multiple-choice .options > .option')].filter(isVisible);
     return [...root.querySelectorAll('.question-option, .select-item')].filter(isVisible);
   }
 
@@ -1101,6 +1162,7 @@
     const explicit = cleanText(
       option?.querySelector('.question-option-label')?.innerText
       || option?.querySelector('.number-item')?.innerText
+      || option?.querySelector('.item-answer')?.innerText
     ).match(/[A-D]/i)?.[0];
     if (explicit) return explicit.toUpperCase();
     const numericValue = Number(option?.querySelector('input[type="radio"]')?.value);
@@ -1111,6 +1173,7 @@
   function isMcqOptionSelected(option) {
     return option?.classList.contains('selected')
       || option?.classList.contains('highlighed')
+      || !!option?.querySelector('.item-answer.active')
       || !!option?.querySelector('.text-answered, input:checked');
   }
 
@@ -1137,7 +1200,7 @@
       label: mcqOptionLabel(element, i), text: optionAnswerText(element), element,
       idOption: element.dataset.idOption,
       images: choiceImages(element),
-      math_content: math.metadata(element.querySelector('.question-option-content') || element.querySelector('label') || element)
+      math_content: math.metadata(element.querySelector('.question-option-content') || element.querySelector('.option-content') || element.querySelector('label') || element)
     }));
   }
 
@@ -1173,18 +1236,30 @@
     if (!input) return false;
     const value = String(answer ?? '').trim();
     if (!value) return false;
-    if (normalizeShortAnswer(input.value) === normalizeShortAnswer(value)) return true;
+    if (input.disabled || input.readOnly) return false;
+    const entry = { type: 'SHORT', answer: value };
+    if (shortAnswerMatches(root, entry) && findCompletionButton(entry)) return true;
 
     input.scrollIntoView({ behavior: 'smooth', block: 'center' });
     input.focus();
-    const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
-    if (descriptor?.set) descriptor.set.call(input, value);
-    else input.value = value;
-    input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }));
+    pendingShortInputs.set(input, questionRecordedState(currentQuestionNumber()));
+    // Use Chromium's editing path so MathPlay receives a real input event.
+    // Setting value + dispatchEvent can display text without registering it
+    // with the page; the remaining Skip button would then discard the answer.
+    input.select();
+    let edited = false;
+    try { edited = document.execCommand('insertText', false, value); } catch (_error) { /* Try standard input binding below. */ }
+    if (!edited) {
+      const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+      if (descriptor?.set) descriptor.set.call(input, value);
+      else input.value = value;
+      input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }));
+    }
     input.dispatchEvent(new Event('change', { bubbles: true }));
-    input.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: value.slice(-1) || '0' }));
+    const key = value.slice(-1) || '0';
+    input.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key, keyCode: key.charCodeAt(0), which: key.charCodeAt(0) }));
     input.blur();
-    return waitForCondition(() => shortAnswerMatches(root, { answer: value }) && !!findCompletionButton({ type: 'SHORT', answer: value }), 2500, 50);
+    return waitForCondition(() => shortAnswerMatches(root, entry) && !!findCompletionButton(entry), 2500, 50);
   }
 
   async function activateMcqOption(option) {
@@ -1717,7 +1792,25 @@
   }
 
   function findCompletionButton(answerEntry) {
-    return findAnswerButton() || (recordedAnswerMatches(getCurrentQuestionRoot(), answerEntry) ? findSkipButton() : null);
+    const root = getCurrentQuestionRoot();
+    if (!recordedAnswerMatches(root, answerEntry)) return null;
+    const answerButton = findAnswerButton();
+    if (answerButton) return answerButton;
+    // A matching unsaved input is not a recorded answer. Keep Skip support
+    // for a SHORT only when the actual answer sheet says it is already done.
+    const input = shortAnswerInput(root);
+    if (String(answerEntry.type || '').toUpperCase() === 'SHORT' || input) {
+      if (questionRecordedState(currentQuestionNumber()) !== true) return null;
+      // Editing an already-done answer still requires Answer. An unchanged
+      // old done marker cannot prove the new value was saved.
+      if (input && pendingShortInputs.has(input) && pendingShortInputs.get(input) !== false) return null;
+    }
+    return findSkipButton();
+  }
+
+  function questionRecordedState(number) {
+    const option = findSidebarButtonForQuestion(number);
+    return option ? option.classList.contains('done') : null;
   }
 
   function findNextQuestionButton() {
@@ -1828,6 +1921,77 @@
     return false;
   }
 
+  function docxAnswerPlan(question, root, entry) {
+    if (entry.type === 'MCQ') {
+      const choice = verifiedLiveMcqChoice(currentMcqChoices(root), entry);
+      const target = choice?.element.querySelector('.item-answer');
+      if (!target) throw new Error(`Câu ${question.number}: không tìm thấy lựa chọn DOCX đã xác minh.`);
+      return [{ target, peers: [...root.querySelectorAll('app-docx-question-multiple-choice .item-answer')] }];
+    }
+    if (entry.type !== 'TF') throw new Error(`Câu ${question.number}: dạng DOCX chưa hỗ trợ ${entry.type}.`);
+    const rows = [...root.querySelectorAll('app-docx-question-true-false-test .options > .option')];
+    return Object.entries(entry.answer).map(([key, value]) => {
+      const matches = rows.filter((row, index) => normalizeSubQuestionKey(row.querySelector('.item-option')?.innerText, index) === key);
+      const row = matches.length === 1 ? matches[0] : null;
+      const saved = entry.statementContents?.[key];
+      if (!row || !saved || math.sourceFingerprint(saved) !== math.sourceFingerprint(math.metadata(row.querySelector('.option-content')))) {
+        throw new Error(`Câu ${question.number}, ý ${key}: nguồn Đúng/Sai DOCX không còn khớp.`);
+      }
+      const peers = [...row.querySelectorAll('.answer > .item-answer')];
+      const candidates = peers.filter(el => truthValue(el.innerText) === truthValue(value));
+      if (truthValue(value) === null || candidates.length !== 1) throw new Error(`Câu ${question.number}, ý ${key}: thiếu nút Đúng/Sai DOCX.`);
+      return { target: candidates[0], peers };
+    });
+  }
+
+  async function runDocxAutoBot(botRevision) {
+    const questions = databaseValidation.questions;
+    // Resolve every control before the first click, including the last TF row.
+    const plans = questions.map(question => {
+      assertValidatedQuestion(question.number);
+      const roots = docxQuestionRoots().filter(root => root.id === question.sourceId);
+      const entry = window.__ONLUYEN_DATABASE_BY_ID__.get(question.sourceId);
+      if (roots.length !== 1 || !entry) throw new Error(`Câu ${question.number}: thiếu ID/đáp án DOCX duy nhất.`);
+      return { question, root: roots[0], entry, controls: docxAnswerPlan(question, roots[0], entry) };
+    });
+    window.__BOT_RUNNING__ = true;
+    let completed = 0;
+    const selected = control => control.target.classList.contains('active')
+      && control.peers.filter(el => el.classList.contains('active')).length === 1;
+    try {
+      for (const plan of plans) {
+        if (!window.__BOT_RUNNING__ || botRevision !== examRevision) return;
+        chrome.runtime.sendMessage({ action: 'BOT_PROGRESS', current: plan.question.number, total: plans.length,
+          text: `Đang điền câu DOCX ${plan.question.number}/${plans.length}...` }).catch(() => {});
+        // Re-resolve controls after rendering so detached nodes cannot be used.
+        assertValidatedQuestion(plan.question.number);
+        const root = docxQuestionRoots().find(el => el.id === plan.question.sourceId);
+        const controls = docxAnswerPlan(plan.question, root, plan.entry);
+        for (const control of controls) {
+          if (!window.__BOT_RUNNING__ || botRevision !== examRevision) return;
+          assertValidatedQuestion(plan.question.number);
+          if (!control.target.isConnected || control.target.getAttribute('aria-disabled') === 'true') throw new Error(`Câu ${plan.question.number}: nút DOCX chưa sẵn sàng.`);
+          if (!selected(control)) {
+            control.target.scrollIntoView({ block: 'center' });
+            control.target.click();
+            const registered = await waitForCondition(() => selected(control), 3000, 50);
+            if (!window.__BOT_RUNNING__ || botRevision !== examRevision) return;
+            if (!registered) throw new Error(`Câu ${plan.question.number}: trang DOCX chưa ghi nhận lựa chọn.`);
+          }
+        }
+        const saved = await waitForCondition(() => controls.every(selected)
+          && questionRecordedState(plan.question.number) === true, 4000, 80);
+        if (!window.__BOT_RUNNING__ || botRevision !== examRevision) return;
+        if (!saved) throw new Error(`Câu ${plan.question.number}: phiếu trả lời DOCX chưa xác nhận đã làm.`);
+        completed++;
+      }
+      chrome.runtime.sendMessage({ action: 'BOT_DONE', completed, total: plans.length,
+        text: `Hoàn tất! Đã điền thành công ${completed}/${plans.length} câu.` }).catch(() => {});
+    } finally {
+      if (botRevision === examRevision) window.__BOT_RUNNING__ = false;
+    }
+  }
+
   async function runAutoBot() {
     const botRevision = examRevision;
     if (window.__ONLUYEN_DATABASE__.size === 0 && !stagedDatabaseInput) {
@@ -1835,6 +1999,7 @@
     }
 
     if (botRevision !== examRevision) return;
+    if (isDocxExam()) return runDocxAutoBot(botRevision);
     window.__BOT_RUNNING__ = true;
     const questions = getFullExamQuestions();
     const total = Math.max(questions.length, window.__ONLUYEN_DATABASE_EXPORT__.length);
@@ -1920,6 +2085,9 @@
 
         const selected = await clickOptionForCurrentQuestion(i, answerEntry);
         if (!selected) {
+          if (answerEntry.type === 'SHORT' && shortAnswerMatches(getCurrentQuestionRoot(), answerEntry)) {
+            throw new Error(`Câu ${i}: ô nhập có ${cleanText(answerEntry.answer)} nhưng trang chưa ghi nhận đáp án. Chưa có nút Trả lời hoặc xác nhận đã làm; bot không bấm Bỏ qua cho đáp án chưa lưu.`);
+          }
           throw new Error(`Không chọn được đáp án cho câu ${i} (${selectionDebugSummary(getCurrentQuestionRoot(), answerEntry)}).`);
         }
 
@@ -1962,11 +2130,13 @@
           confirmed = i < total
             ? await waitForCondition(() => {
                 const currentIdentity = currentQuestionIdentity();
-                return !!currentIdentity && currentIdentity !== identityBeforeSubmit && currentQuestionMatches(i + 1);
+                return !!currentIdentity && currentIdentity !== identityBeforeSubmit && currentQuestionMatches(i + 1)
+                  && (answerEntry.type !== 'SHORT' || questionRecordedState(i) !== false);
               })
-            : await waitForCondition(() => isFinalAnswerRecorded() || (skippedRecordedAnswer
+            : await waitForCondition(() => (answerEntry.type !== 'SHORT' || questionRecordedState(i) !== false)
+              && (isFinalAnswerRecorded() || (skippedRecordedAnswer
               && currentQuestionIdentity() === identityBeforeSubmit && !findAnswerButton(true)
-              && recordedAnswerMatches(getCurrentQuestionRoot(), answerEntry)));
+              && recordedAnswerMatches(getCurrentQuestionRoot(), answerEntry))));
         }
         if (!confirmed) {
           if (!window.__BOT_RUNNING__) {
@@ -1974,6 +2144,9 @@
             break;
           }
           const actual = currentQuestionNumber();
+          if (!isPracticePage && answerEntry.type === 'SHORT' && questionRecordedState(i) === false) {
+            throw new Error(`Câu ${i}: đã bấm ${completionLabel} nhưng phiếu trả lời chưa xác nhận lưu đáp án. Bot đã dừng; không coi câu này là hoàn thành.`);
+          }
           throw new Error(isPracticePage
             ? `Đã bấm ${completionLabel} câu luyện tập nhưng trang chưa tải câu tiếp theo.`
             : i < total

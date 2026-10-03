@@ -44,7 +44,10 @@ async function mount(browser, mode = {}) {
     window.__render = n => {
       const root = document.querySelector('.question-container');
       root.innerHTML = `<div class="question-info"><div class="num">Câu: ${n} <span>#${n === 1 ? '12905165' : '9999'}</span></div></div><div class="question-name">Đề câu ${n}.</div>${__texts[n - 1].map((t, i) => `<div class="question-option"><span class="question-option-label">${i ? 'B' : 'A'}</span><div class="question-option-content">${t}</div><input type="checkbox"></div>`).join('')}<div class="submit-bar"><button>BỎ QUA</button></div>`;
-      const updateButton = () => { if (n !== 1 || !mode.keepSkip) root.querySelector('button').innerText = 'TRẢ LỜI'; };
+      const updateButton = () => {
+        if (n !== 1 || !mode.keepSkip) root.querySelector('button').innerText = 'TRẢ LỜI';
+        else if (mode.type === 'SHORT') document.querySelector('.answer-sheet .option').classList.add('done');
+      };
       if (n === 1 && mode.type === 'SHORT') {
         root.querySelectorAll('.question-option').forEach(el => el.remove());
         const answerArea = `<div class="answer-input"><div class="line">Đáp án: <span class="ans-span-second"></span><input class="can-resize-second" type="text" value="${mode.preset === 'correct' ? '-2,5' : mode.preset === 'wrong' ? '99' : ''}"><span class="answer-unit"><math><mi>m</mi></math></span></div></div>`;
@@ -54,12 +57,14 @@ async function mount(browser, mode = {}) {
           ? `<mjx-container><mjx-assistive-mml><math><mn>${value}</mn></math></mjx-assistive-mml></mjx-container>` : value; };
         if (mode.inlineShort && mode.preset) mirror(root.querySelector('.answer-input input').value);
         root.querySelector('.answer-input input').addEventListener('input', e => {
+          if (mode.noRegistration || mode.nativeOnly && !e.isTrusted) return;
           __fills++; if (mode.refuseChange) e.target.value = '99'; else updateButton();
           if (mode.inlineShort) mirror(e.target.value);
           if (mode.changeAfterFill === 'prompt') root.querySelector('.question-name').firstChild.textContent = 'Đề đã đổi.';
           if (mode.changeAfterFill === 'id') root.querySelector('.question-info .num span').textContent = '#11111';
           if (mode.changeAfterFill === 'unit') root.querySelector('.answer-unit mi').textContent = 'cm';
         });
+        if (mode.saved || mode.preset === 'correct' && mode.keepSkip) document.querySelector('.answer-sheet .option').classList.add('done');
       } else if (n === 1 && mode.type === 'TF') {
         root.querySelectorAll('.question-option').forEach((el, i) => {
           el.outerHTML = `<div class="child-content"><span class="option-text"><span class="option-char">${i ? 'b' : 'a'})</span><span class="fadein">${__texts[0][i]}</span></span><div class="true-false"><input type="radio" name="tf-${i}" value="true" ${!i && mode.preset ? 'checked' : ''}><input type="radio" name="tf-${i}" value="false" ${i && mode.preset === 'correct' ? 'checked' : ''}></div></div>`;
@@ -81,6 +86,7 @@ async function mount(browser, mode = {}) {
       }));
       root.querySelector('button').addEventListener('click', () => {
         if (root.querySelector('button').innerText === 'BỎ QUA') __skips++;
+        if (n === 1 && mode.type === 'SHORT' && !mode.noSave) document.querySelector('.answer-sheet .option').classList.add('done');
         __submits++; if (n === 1) __render(2); else if (!mode.lastSavedSkip) root.querySelector('button').innerText = 'KẾT THÚC';
         if (n === 2 && mode.lastSavePending) {
           const button = root.querySelector('button'); button.innerText = 'TRẢ LỜI'; button.disabled = true;
@@ -130,14 +136,18 @@ async function installApiDelivery(page) {
       const root = document.querySelector('.question-container');
       const questionSource = root.querySelector('.question-name').outerHTML;
       window.__nonNavigationClicks = 0;
+      window.__acceptedShortValues = {};
       window.__render = n => {
         root.innerHTML = `<div class="question-info"><div class="num">Câu: ${n} #${n === 10 ? '13535732' : n === 11 ? '13535721' : 8000 + n}</div></div>${questionSource}<div class="submit-bar"><button>BỎ QUA</button></div>`;
         root.querySelectorAll('.question-name span').forEach(el => el.onclick = () => __nonNavigationClicks++);
         root.querySelector('input').oninput = e => {
+          if (!e.isTrusted) return;
+          __acceptedShortValues[n] = e.target.value;
           __fills++; root.querySelector('.ans-span-second').textContent = e.target.value;
           root.querySelector('.submit-bar button').textContent = 'TRẢ LỜI';
         };
         root.querySelector('.submit-bar button').onclick = () => {
+          document.querySelectorAll('.answer-sheet .option')[n - 1].classList.add('done');
           __submits++; if (n < 11) __render(n + 1); else root.querySelector('.submit-bar button').textContent = 'KẾT THÚC';
         };
       };
@@ -151,7 +161,7 @@ async function installApiDelivery(page) {
     assert.equal(await sidebarPage.$eval('.question-info .num', el => el.textContent), 'Câu: 10 #13535732', 'Collection returns to the originally open question');
     assert.deepEqual(await sidebarPage.evaluate(() => [__navigation, __nonNavigationClicks, __fills, __submits]), [12, 0, 0, 0]);
     const sidebarAnswers = Array.from({ length: 11 }, (_, i) => ({ cau: i + 1,
-      id: String(i === 9 ? 13535732 : i === 10 ? 13535721 : 8001 + i), loai: 'SHORT', dap_an: '2027' }));
+      id: String(i === 9 ? 13535732 : i === 10 ? 13535721 : 8001 + i), loai: 'SHORT', dap_an: i === 9 ? '36' : i === 10 ? '11,09' : '2027' }));
     const sidebarLoaded = await send(sidebarPage, { action: 'OL_LOAD_DATABASE', json: sidebarAnswers });
     assert.equal(sidebarLoaded.ok, true, sidebarLoaded.error);
     assert.equal((await send(sidebarPage, { action: 'OL_START_BOT' })).ok, true);
@@ -159,6 +169,8 @@ async function installApiDelivery(page) {
     assert.deepEqual(await sidebarPage.evaluate(() => [__navigation, __nonNavigationClicks, __fills, __submits]), [13, 0, 11, 11],
       'Prompt/import/start reuse one scan and never click numbers in the question, report or unrelated navigation');
     assert.deepEqual(await sidebarPage.evaluate(() => __messages.filter(m => m.action === 'BOT_ERROR')), []);
+    assert.deepEqual(await sidebarPage.evaluate(() => [__acceptedShortValues[9], __acceptedShortValues[10], __acceptedShortValues[11]]), ['2027', '36', '11,09'], 'The page registers each short answer through native input');
+    assert.equal(await sidebarPage.$$eval('.answer-sheet .option.done', els => els.length), 11, 'Each saved short answer is marked done');
     await sidebarPage.close();
     const genericSidebar = await mount(browser);
     await genericSidebar.setContent('<div class="question">Nội dung câu hỏi ngoài phiếu trả lời.</div><app-sidebar-school-test><div class="question">Nội dung thanh điều hướng không phải đề.</div></app-sidebar-school-test>');
@@ -314,6 +326,26 @@ async function installApiDelivery(page) {
       assert.deepEqual(await changedShort.evaluate(() => [__fills, __clicks, __submits]), [1, 0, 0], 'Real source changes after filling still prevent submission');
       assert.ok(await changedShort.evaluate(() => __messages.some(m => m.action === 'BOT_ERROR')));
       await changedShort.close();
+    }
+    for (const [value, fallback] of [['2027', false], ['36', false], ['11,09', false], ['36', true]]) {
+      const native = await mount(browser, { type: 'SHORT', inlineShort: true, nativeOnly: !fallback });
+      if (fallback) await native.evaluate(() => { document.execCommand = () => false; });
+      const first = { cau: 1, id: '12905165', loai: 'SHORT', dap_an: value };
+      assert.equal((await send(native, { action: 'OL_START_BOT', json: [first, answers[1]] })).ok, true);
+      await native.waitForFunction(() => !window.__BOT_RUNNING__);
+      assert.deepEqual(await native.evaluate(() => [__fills, __submits, __skips]), [1, 2, 0], `${value}: the page registers the input and the bot saves via Answer`);
+      assert.deepEqual(await native.evaluate(() => __messages.filter(m => m.action === 'BOT_ERROR')), []);
+      await native.close();
+    }
+    for (const mode of [{ noRegistration: true }, { noSave: true }, { preset: 'wrong', saved: true, keepSkip: true }]) {
+      const unsaved = await mount(browser, { type: 'SHORT', inlineShort: true, ...mode });
+      const first = { cau: 1, id: '12905165', loai: 'SHORT', dap_an: '2027' };
+      assert.equal((await send(unsaved, { action: 'OL_START_BOT', json: [first, answers[1]] })).ok, true);
+      await unsaved.waitForFunction(() => !window.__BOT_RUNNING__, { timeout: 20000 });
+      assert.deepEqual(await unsaved.evaluate(() => [__skips, __submits]), [0, mode.noSave ? 1 : 0], 'A matching field without page registration is never skipped; advancing without a saved marker is not completion');
+      assert.ok(await unsaved.evaluate(() => __messages.some(m => m.action === 'BOT_ERROR')));
+      assert.equal(await unsaved.evaluate(() => __messages.some(m => m.action === 'BOT_DONE')), false);
+      await unsaved.close();
     }
     for (const mode of [{ type: 'MCQ', preset: 'multiple' }, { type: 'SHORT', preset: 'wrong', refuseChange: true }]) {
       const blockedSkip = await mount(browser, { ...mode, keepSkip: true });
