@@ -3,6 +3,57 @@ const fs = require('node:fs');
 const path = require('node:path');
 const math = require('../math-content');
 const cases = require('./math-cases');
+const degreeQuestionHtml = fs.readFileSync(path.join(__dirname, 'fixtures/triangle-degrees-question.html'), 'utf8');
+const degreeOptions = [...degreeQuestionHtml.matchAll(/<math\b[\s\S]*?<\/math>/g)].slice(-4).map(m => m[0]);
+assert.equal(degreeOptions.length, 4);
+for (const [i, n] of [70, 30, 60, 45].entries()) {
+  const forms = [`${n}°.`, `${n}&deg;.`, `$${n}°$`, `$${n}^{\\circ}$`, `$${n}{}^{\\circ}$`,
+    `$${n}^{∘}$`, `<math><msup><mn>${n}</mn><mstyle><mo>∘</mo></mstyle></msup></math>`,
+    `<math><mn>${n}</mn><mo>&#176;</mo></math>`, degreeOptions[i], math.text(degreeOptions[i])];
+  for (const a of forms) {
+    for (const b of forms) cases.equal.push([a, b]);
+    for (const other of [String(n), `$${n}^0$`, `$${n}_0$`, `$${n}\\circ$`, `$${n}_{\\circ}$`,
+      `<math><mover><mn>${n}</mn><mo>∘</mo></mover></math>`]) cases.different.push([a, other]);
+    for (let j = i + 1; j < degreeOptions.length; j++) cases.different.push([a, degreeOptions[j]]);
+  }
+  const exported = math.toPromptContent(degreeOptions[i]);
+  assert.equal(exported.ok, true);
+  assert.equal(exported.text, `\\(${n}°\\)`);
+  assert.deepEqual(exported.diagnostics, []);
+  assert.equal(exported.segments[0].raw, degreeOptions[i], 'Keep original MathML as the saved source');
+}
+cases.equal.push(
+  ['Góc A bằng 60°.', '<div>Góc <math><mi>A</mi></math> bằng ' + degreeOptions[2] + '.</div>'],
+  [String.raw`$\sin(60^{\circ})$`, '<math><mi>sin</mi><mo>(</mo><msup><mn>60</mn><mo>∘</mo></msup><mo>)</mo></math>'],
+  [String.raw`$\frac{60^{\circ}}{2}$`, '<math><mfrac><mrow><mn>60</mn><msup><mrow></mrow><mo>∘</mo></msup></mrow><mn>2</mn></mfrac></math>'],
+  [String.raw`$x_i^{\circ}$`, '<math><msubsup><mi>x</mi><mi>i</mi><mo>∘</mo></msubsup></math>'],
+  [String.raw`$x_i^{\circ}$`, String.raw`$x_i°$`],
+  [String.raw`$(a+b)^{\circ}$`, String.raw`$(a+b)°$`]
+);
+cases.different.push(
+  [String.raw`$x_i^{\circ}$`, String.raw`$x_j^{\circ}$`],
+  [String.raw`$60^{\circ+1}$`, '60°'],
+  ['60°', '<math><msup><mn>60</mn><mn>0</mn></msup></math>'],
+  ['60°', '<math><msub><mn>60</mn><mo>∘</mo></msub></math>'],
+  [String.raw`$ {a+b}^{\circ} $`, '$a+b°$'],
+  [String.raw`$ (a+b)^{\circ} $`, '$a+b°$'],
+  ['<math><msup><mrow><mn>6</mn><mn>0</mn></mrow><mo>∘</mo></msup></math>', '60°']
+);
+cases.equal.push([String.raw`$ {a+b}^{\circ} $`, '<math><msup><mrow><mi>a</mi><mo>+</mo><mi>b</mi></mrow><mo>∘</mo></msup></math>']);
+const degreeChoices = degreeOptions.map((text, i) => ({ label: String.fromCharCode(65+i), idOption:String(i), text }));
+assert.equal(math.resolveChoice(degreeChoices, '60°.').choice, degreeChoices[2]);
+assert.equal(math.verifyChoice(degreeChoices, '60°.', null, null, {snapshotValid:true,label:'C'}).choice, degreeChoices[2]);
+const wrongDegreeIdentity = math.verifyChoice(degreeChoices, '80°.', null, null, {snapshotValid:true,label:'C'});
+assert.equal(wrongDegreeIdentity.code, 'ID_CONFLICT');
+assert.equal(wrongDegreeIdentity.diagnostic.choiceLabel, 'C');
+assert.equal(wrongDegreeIdentity.diagnostic.rightText, '60');
+const wrongDegreeLabel = math.verifyChoice(degreeChoices, '60°.', null, null, {snapshotValid:true,label:'B'});
+assert.equal(wrongDegreeLabel.code, 'ID_CONFLICT');
+assert.equal(wrongDegreeLabel.diagnostic.choiceLabel, 'B');
+assert.equal(wrongDegreeLabel.diagnostic.rightText, '30');
+const wrongDegreeId = math.verifyChoice(degreeChoices, '60°.', '0', null);
+assert.equal(wrongDegreeId.code, 'ID_CONFLICT');
+assert.equal(wrongDegreeId.diagnostic.choiceLabel, 'A');
 const prosePrefix = 'nửa mặt phẳng không chứa gốc tọa độ, bờ là đường thẳng ';
 const proseSuffix = ' (không bao gồm đường thẳng).';
 const fractionFormula = '<math><mi>y</mi><mo>=</mo><mfrac><mn>1</mn><mn>2</mn></mfrac><mi>x</mi><mo>+</mo><mfrac><mn>5</mn><mn>2</mn></mfrac></math>';
@@ -159,6 +210,10 @@ assert.equal(math.resolveChoice(imageChoices, null, 'plot-b', ['https://example.
 assert.equal(math.resolveChoice([imageChoices[0], imageChoices[0]], null, null, ['https://example.test/a.png']).choice, null);
 assert.equal(math.resolveChoice(imageChoices, null, null, ['https://example.test/missing.png']).choice, null);
 assert.equal(math.resolveChoice(imageChoices, null, null, ['javascript:alert(1)']).status, 'unsupported');
+const imageLabelConflict = math.verifyChoice(imageChoices.map((c,i)=>({...c,label:i?'B':'A'})), null, null,
+  ['https://example.test/a.png'], {snapshotValid:true,label:'B'});
+assert.equal(imageLabelConflict.code,'ID_CONFLICT');
+assert.equal(imageLabelConflict.diagnostic,undefined,'An image-only conflict has no fabricated textual difference');
 assert.equal(math.resolveChoice([{ text: '', images: [{ src: 'blob:https://app.onluyen.vn/graph-1' }] }], null, null, ['blob:https://app.onluyen.vn/graph-1']).status, 'equal');
 assert.equal(math.resolveChoice([{ text: 'x+y', images: imageChoices[0].images }], 'x-y', null, ['https://example.test/a.png']).choice, null);
 assert.equal(math.resolveChoice([choices[0], choices[0]], 'x+y≤50').choice, null);

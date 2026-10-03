@@ -35,8 +35,25 @@ assert.ok(antennaQuestions[0].images[0].src.length > 265700, 'Image API retains 
 const antennaCliPrompt = cli.buildPrompt(antennaQuestions);
 assert.match(antennaCliPrompt, /13050131/);
 assert.match(antennaCliPrompt, /Trên nóc một tòa nhà/);
-assert.ok(antennaCliPrompt.includes('<mn>50</mn>'));
+assert.ok(antennaCliPrompt.includes('50°'));
 assert.doesNotMatch(antennaCliPrompt, /A{1000}|<svg|<path/);
+
+const degreeHtml = fs.readFileSync(path.join(__dirname, 'fixtures/triangle-degrees-question.html'), 'utf8');
+const degreeSources = [...degreeHtml.matchAll(/<math\b[\s\S]*?<\/math>/g)].slice(-4).map(m => m[0]);
+const degreeQuestions = cli.parseApiQuestions([{dataStandard:{numberQuestion:12905060,stepIndex:20,typeAnswer:0,
+  languagesData:{vi:{content:'Cho tam giác ABC có góc B tù; tính góc A.',
+    options:degreeSources.map((content,i)=>({idOption:String(i),content}))}}}}]);
+const degreeSnapshot = {id:'degree-snapshot',signature:math.signature(degreeQuestions),questions:degreeQuestions};
+const degreeCliPrompt = cli.buildPrompt(degreeQuestions,degreeSnapshot);
+assert.ok(degreeCliPrompt.includes('60°'));
+const degreeEntry = {cau:21,id:'12905060',snapshot_id:degreeSnapshot.id,loai:'MCQ',dap_an:'C',noi_dung_dap_an:'60°.'};
+const degreeSaved = cli.validateAndEnrichAnswers([degreeEntry],degreeQuestions);
+assert.equal(degreeSaved[0].dap_an,'C');
+assert.equal(degreeSaved[0].noi_dung_dap_an,'60°.');
+assert.ok(degreeSaved[0].math_content.answer.segments[0].raw.includes('<msup>'));
+assert.equal(cli.validateAndEnrichAnswers(JSON.parse(JSON.stringify(degreeSaved)),degreeQuestions)[0].dap_an,'C');
+assert.throws(()=>cli.validateAndEnrichAnswers([{...degreeEntry,noi_dung_dap_an:'80°.'}],degreeQuestions),error=>
+  error.report.issues.some(issue=>issue.code==='ID_CONFLICT'&&issue.diagnostic.choiceLabel==='C'&&issue.diagnostic.rightText==='60'));
 
 // Deliberately outside the parser's grammar. These are sources, not flattened text.
 const unknown = '<math><menclose notation="circle"><mi>x</mi></menclose></math>';

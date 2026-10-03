@@ -22,7 +22,7 @@
     epsilon: 'ϵ', varepsilon: 'ε', sigma: 'σ', omega: 'ω', Delta: 'Δ', Sigma: 'Σ', Omega: 'Ω',
     sum: '∑', prod: '∏', int: '∫', oint: '∮', partial: '∂', nabla: '∇',
     lbrace: '{', rbrace: '}', lbrack: '[', rbrack: ']', lvert: '|', rvert: '|', vert: '|',
-    langle: '⟨', rangle: '⟩', ell: 'ℓ', dots: '…', ldots: '…', cdots: '⋯', prime: '′'
+    langle: '⟨', rangle: '⟩', ell: 'ℓ', dots: '…', ldots: '…', cdots: '⋯', prime: '′', circ: '∘'
   };
   const functions = new Set(['sin', 'cos', 'tan', 'cot', 'sec', 'csc', 'arcsin', 'arccos', 'arctan', 'log', 'ln', 'exp', 'lim', 'max', 'min']);
   const vulgar = { '½': ['1', '2'], '⅓': ['1', '3'], '⅔': ['2', '3'], '¼': ['1', '4'], '¾': ['3', '4'], '⅕': ['1', '5'], '⅖': ['2', '5'], '⅗': ['3', '5'], '⅘': ['4', '5'], '⅙': ['1', '6'], '⅚': ['5', '6'], '⅛': ['1', '8'], '⅜': ['3', '8'], '⅝': ['5', '8'], '⅞': ['7', '8'] };
@@ -39,6 +39,26 @@
     const flat = items.flatMap(item => item?.t === 'row' ? item.items : item ? [item] : []);
     return flat.length === 1 ? flat[0] : { t: 'row', items: flat };
   }
+  // A superscript circle is the conventional degree suffix. MathJax emits
+  // either x^{\circ} or x followed by {}^{\circ}; keep the base and any
+  // subscript intact. Ordinary composition circles and exponent zero differ.
+  function degreeScript(node) {
+    if (node.t !== 'script' || node.sup?.t !== 'symbol' || node.sup.v !== '∘') return node;
+    // Keep a grouped multi-atom base opaque: {a+b}^{\circ} cannot collapse
+    // to a+b° and accidentally move the degree suffix onto only b.
+    if (node.base.t === 'row' && node.base.items.length) return node;
+    const base = node.sub ? { ...node, sup: null } : node.base;
+    return row([base, symbol('°')]);
+  }
+  function latexDegrees(node) {
+    const result = { ...node };
+    if (result.items) result.items = result.items.map(latexDegrees);
+    if (result.rows) result.rows = result.rows.map(cells => cells.map(latexDegrees));
+    for (const key of ['base', 'sub', 'sup', 'numerator', 'denominator', 'body', 'degree']) {
+      if (result[key]) result[key] = latexDegrees(result[key]);
+    }
+    return result.t === 'row' ? row(result.items) : degreeScript(result);
+  }
   function fenced(open, body, close) {
     if ([open, close].some(value => value && !['(', ')', '[', ']', '{', '}', '|', '‖', '⟨', '⟩'].includes(value))) fail('Ký hiệu ngoặc chưa hỗ trợ');
     if (open && close) return row([symbol(open), body, symbol(close)]);
@@ -46,7 +66,7 @@
     return { t: 'fenced', open: open || null, body, close: close || null };
   }
   const children = node => node.t === 'row' ? node.items : [node];
-  const entities = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', emsp: ' ', ensp: ' ', thinsp: ' ', lsquo: '‘', rsquo: '’', ldquo: '“', rdquo: '”', ndash: '–', mdash: '—', hellip: '…', le: '≤', leq: '≤', ge: '≥', geq: '≥', ne: '≠', minus: '−', plusmn: '±', times: '×', divide: '÷', cup: '∪', cap: '∩', infin: '∞', isin: '∈', notin: '∉', radic: '√' };
+  const entities = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', emsp: ' ', ensp: ' ', thinsp: ' ', lsquo: '‘', rsquo: '’', ldquo: '“', rdquo: '”', ndash: '–', mdash: '—', hellip: '…', le: '≤', leq: '≤', ge: '≥', geq: '≥', ne: '≠', minus: '−', plusmn: '±', times: '×', divide: '÷', cup: '∪', cap: '∩', infin: '∞', isin: '∈', notin: '∉', radic: '√', deg: '°' };
   const decode = s => String(s).replace(/&(#x[\da-f]+|#\d+|[A-Za-z]+);/gi, (all, code) => {
     if (code[0] === '#') {
       const n = code[1].toLowerCase() === 'x' ? parseInt(code.slice(2), 16) : Number(code.slice(1));
@@ -98,7 +118,7 @@
       }
       if ('{}^_&'.includes(c)) tokens.push({ k: c, v: c });
       else if (/\p{L}/u.test(c)) tokens.push({ k: 'char', v: c });
-      else if ('+-−–﹣－=<>≤≥⩽⩾≠±∓×·÷/(),;:[]|∪∩∈∉⊂⊆⊃⊇∖⧵∅∞∀∃¬∧∨→←⇒⇔∑∏∫∮∂∇⟨⟩…⋯.!'.includes(c)) tokens.push({ k: 'char', v: c });
+      else if ('+-−–﹣－=<>≤≥⩽⩾≠±∓×·÷/(),;:[]|∪∩∈∉⊂⊆⊃⊇∖⧵∅∞∀∃¬∧∨→←⇒⇔∑∏∫∮∂∇⟨⟩…⋯.!°∘'.includes(c)) tokens.push({ k: 'char', v: c });
       else fail(`Ký hiệu chưa hỗ trợ: ${c}`);
       i++;
     }
@@ -268,6 +288,11 @@
           if (!body) fail('Dấu trên biến không có cơ số');
           items.push({ t: 'accent', kind: token.v, body }); continue;
         }
+        if (peek().k === 'char' && peek().v === '°' && items.length) {
+          pos++;
+          items.push(degreeScript({ t: 'script', base: items.pop(), sub: null, sup: symbol('∘') }));
+          continue;
+        }
         if (['^', '_', 'sup', 'sub'].includes(peek().k)) {
           const token = tokens[pos++];
           const base = items.pop();
@@ -283,7 +308,7 @@
       }
       return row(items);
     }
-    return sequence();
+    return latexDegrees(sequence());
   }
 
   // Small non-executing XML/HTML reader, identical in Node and the browser.
@@ -411,8 +436,8 @@
       }
       case 'msqrt': return { t: 'root', degree: { t: 'number', v: '2' }, body: row(kids.map(parseMathML)) };
       case 'mroot': { const [body, degree] = args(2); return { t: 'root', degree, body }; }
-      case 'msup': case 'msub': { const [base, value] = args(2); return { t: 'script', base, sub: node.name === 'msub' ? value : null, sup: node.name === 'msup' ? value : null }; }
-      case 'msubsup': { const [base, sub, sup] = args(3); return { t: 'script', base, sub, sup }; }
+      case 'msup': case 'msub': { const [base, value] = args(2); return degreeScript({ t: 'script', base, sub: node.name === 'msub' ? value : null, sup: node.name === 'msup' ? value : null }); }
+      case 'msubsup': { const [base, sub, sup] = args(3); return degreeScript({ t: 'script', base, sub, sup }); }
       case 'mover': case 'munder': {
         const [body, mark] = args(2);
         const kind = { '→': 'vec', '¯': 'bar', '‾': 'bar', '^': 'hat', 'ˆ': 'hat', '˙': 'dot', '¨': 'ddot', '_': 'underline' }[render(mark)];
@@ -460,7 +485,7 @@
     if (/^(?:\(\d+\)\s*)?[A-Za-z]\s*=\s*\{[\s\S]*\}$/.test(s)) return true;
     if (/\s/.test(s) && Array.from(s.matchAll(/[A-Za-z]{2,}/g)).some(m => !/^[A-Z]{1,3}$/.test(m[0]) && !functions.has(m[0]) && !s.includes(`\\${m[0]}`))) return false;
     if (/[\p{L}]/u.test(s.replace(/[A-Za-zα-ωΑ-Ωℕℤℚℝℂⁿ]/gu, ''))) return false;
-    if (/\\[A-Za-z]+|[≤≥⩽⩾⇒⇔→←∪∩∈∉⊂⊆⊃⊇∞ℕℤℚℝℂ√½⅓⅔¼¾⅕⅖⅗⅘⅙⅚⅛⅜⅝⅞²³⁰¹⁴⁵⁶⁷⁸⁹₀-₉′″‴\u20d7\u0304\u0302\u0307\u0308\u0332]/u.test(s)) return true;
+    if (/\\[A-Za-z]+|[≤≥⩽⩾⇒⇔→←∪∩∈∉⊂⊆⊃⊇∞ℕℤℚℝℂ√½⅓⅔¼¾⅕⅖⅗⅘⅙⅚⅛⅜⅝⅞²³⁰¹⁴⁵⁶⁷⁸⁹₀-₉′″‴°∘\u20d7\u0304\u0302\u0307\u0308\u0332]/u.test(s)) return true;
     if (!/[\p{L}\p{N}]/u.test(s)) return false;
     return /^[\dA-Za-zα-ωΑ-Ω\s+\-−–=<>^_()[\]{},;.:|/×·]+$/u.test(s) && !/[A-Za-z]{4,}/.test(s);
   }
@@ -917,14 +942,19 @@
     if (hasSource || imageRefs != null) {
       const resolved = resolveChoice(choices, saved, optionId, imageRefs);
       if (resolved.status === 'equal') {
-        if (labels.length && labels[0] !== resolved.choice) return failVerification('ID_CONFLICT', 'Nội dung và chữ cái của snapshot mâu thuẫn.');
+        if (labels.length && labels[0] !== resolved.choice) {
+          const diagnostic = compare(saved, labels[0].math_content || labels[0].text).diagnostic;
+          return { ...failVerification('ID_CONFLICT', 'Nội dung và chữ cái của snapshot mâu thuẫn.'),
+            ...(diagnostic ? { diagnostic: { ...diagnostic, choiceLabel: labels[0].label } } : {}) };
+        }
         return { ...resolved, verification: { version: 1, basis: 'structured', reason: imageRefs != null ? 'Nguồn ảnh khớp duy nhất' : 'Nội dung có cấu trúc khớp duy nhất' } };
       }
       if (imageRefs != null) return resolved;
       if (/mất cấu trúc/.test(resolved.reason || '')) return resolved;
       const target = byIdentity || null;
       const compared = target ? compare(saved, target.math_content || target.text) : null;
-      if (compared?.status === 'different') return failVerification('ID_CONFLICT', 'ID/chữ cái và nội dung đáp án mâu thuẫn.');
+      if (compared?.status === 'different') return { ...failVerification('ID_CONFLICT', 'ID/chữ cái và nội dung đáp án mâu thuẫn.'),
+        diagnostic: { ...compared.diagnostic, choiceLabel: target.label } };
       if (target && compared?.status === 'equal') return { status: 'equal', code: 'IDENTITY_MATCH', reason: '', choice: target,
         verification: { version: 1, basis: ids.length ? 'structured' : 'snapshot',
           evidence: ids.length ? 'option_id' : 'snapshot_label', reason: 'Định danh lựa chọn và nội dung có cấu trúc khớp' } };

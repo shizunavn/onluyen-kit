@@ -105,6 +105,72 @@ function trueFalseRow(key, text, token) {
   const browser = await puppeteer.launch({ executablePath, headless: true });
 
   try {
+    const degreeHtml = fs.readFileSync(path.join(__dirname, 'fixtures/triangle-degrees-question.html'), 'utf8');
+    const degreePage = await mount(browser, `<div id="test-step-question"><div class="question-container">${degreeHtml}</div></div>`, 'https://app.onluyen.vn/school/test/step/degree-fixture');
+    const degreePrompt = await send(degreePage, {action:'OL_GET_AI_PROMPT'});
+    assert.equal(degreePrompt.ok,true,degreePrompt.error);
+    assert.match(degreePrompt.prompt,/12905060/);
+    assert.ok(degreePrompt.prompt.includes('C. \\(60°\\)'));
+    const degreeEntry = {cau:21,id:'12905060',loai:'MCQ',dap_an:'C',noi_dung_dap_an:'60°.'};
+    const degreeLoaded = await send(degreePage,{action:'OL_LOAD_DATABASE',json:[degreeEntry]});
+    assert.equal(degreeLoaded.ok,true,degreeLoaded.error);
+    assert.equal(degreeLoaded.answers[0].dap_an,'C');
+    const degreeSnapshotId = degreePrompt.prompt.match(/snapshot_id: ([a-f0-9]+)/)[1];
+    const degreeBound = await send(degreePage,{action:'OL_LOAD_DATABASE',json:[{...degreeEntry,snapshot_id:degreeSnapshotId}]});
+    assert.equal(degreeBound.ok,true,degreeBound.error);
+    const degreeCache = await degreePage.evaluate(()=>JSON.stringify(window.__storageFixture||{}));
+    const degreeWrong = await send(degreePage,{action:'OL_LOAD_DATABASE',json:[{...degreeEntry,snapshot_id:degreeSnapshotId,noi_dung_dap_an:'80°.'}]});
+    assert.equal(degreeWrong.ok,false);
+    assert.match(degreeWrong.error,/lựa chọn C: “80” \/ “60”/);
+    assert.equal(await degreePage.evaluate(()=>JSON.stringify(window.__storageFixture||{})),degreeCache);
+    assert.equal((await send(degreePage,{action:'OL_PING'})).databaseJson,degreeBound.json);
+    assert.equal(await degreePage.$$eval('input:checked',inputs=>inputs.length),0);
+    await degreePage.evaluate(()=>{
+      window.__ONLUYEN_RAW_DATA__ = {questions:[{dataStandard:{numberQuestion:12905060,stepIndex:20,typeAnswer:0,
+        languagesData:{vi:{content:document.querySelector('.question-name').innerHTML,
+          options:[...document.querySelectorAll('.question-option-content')].map(el=>({idOption:el.id,content:el.innerHTML}))}}}}]};
+    });
+    const degreeApiPrompt = await send(degreePage,{action:'OL_GET_AI_PROMPT'});
+    assert.equal(degreeApiPrompt.ok,true,degreeApiPrompt.error);
+    assert.ok(degreeApiPrompt.prompt.includes('60°'));
+    const degreeApiLoaded = await send(degreePage,{action:'OL_LOAD_DATABASE',json:[degreeEntry]});
+    assert.equal(degreeApiLoaded.ok,true,degreeApiLoaded.error);
+    assert.equal(degreeApiLoaded.answers[0].dap_an,'C');
+    await degreePage.evaluate(()=>{
+      window.__ONLUYEN_RAW_DATA__ = null;
+      const parent=document.querySelector('.options');
+      [...parent.children].reverse().forEach(el=>parent.appendChild(el));
+      parent.querySelectorAll('.question-option-label').forEach((el,i)=>el.textContent=String.fromCharCode(65+i));
+    });
+    const degreeReordered = await send(degreePage,{action:'OL_LOAD_DATABASE',json:[degreeEntry]});
+    assert.equal(degreeReordered.ok,true,degreeReordered.error);
+    assert.equal(degreeReordered.answers[0].dap_an,'B','Find 60 degrees by structure after choices reorder');
+    const degreeReorderedPrompt = await send(degreePage,{action:'OL_GET_AI_PROMPT'});
+    const degreeReorderedSnapshot = degreeReorderedPrompt.prompt.match(/snapshot_id: ([a-f0-9]+)/)[1];
+    const wrongDegreeLetter = await send(degreePage,{action:'OL_LOAD_DATABASE',json:[{...degreeEntry,snapshot_id:degreeReorderedSnapshot}]});
+    assert.equal(wrongDegreeLetter.ok,false,'A current snapshot cannot hide a contradictory letter');
+    assert.match(wrongDegreeLetter.error,/lựa chọn C: “60” \/ “30”/);
+    // Keep the real question's ID and markup, but renumber the one-question
+    // test exam so the driver can start at 1. This is only test scaffolding.
+    await degreePage.evaluate(()=>{
+      document.querySelector('.question-info .num').innerHTML='Câu: 1 <span>#12905060</span>';
+      window.__degreeClicks=0; window.__degreeSubmits=0;
+      document.querySelectorAll('.question-option').forEach(option=>option.onclick=()=>{
+        __degreeClicks++;
+        document.querySelectorAll('.question-option input').forEach(input=>input.checked=false);
+        option.querySelector('input').checked=true;
+      });
+      document.querySelector('.submit-bar button').onclick=event=>{__degreeSubmits++;event.currentTarget.textContent='KẾT THÚC';};
+    });
+    const degreeBotLoaded = await send(degreePage,{action:'OL_LOAD_DATABASE',json:[degreeEntry]});
+    assert.equal(degreeBotLoaded.ok,true,degreeBotLoaded.error);
+    assert.equal((await send(degreePage,{action:'OL_START_BOT'})).ok,true);
+    await degreePage.waitForFunction(()=>!window.__BOT_RUNNING__);
+    assert.deepEqual(await degreePage.evaluate(()=>[__degreeClicks,__degreeSubmits]),[1,1]);
+    assert.equal(await degreePage.$eval('input:checked',input=>input.closest('.question-option').querySelector('.question-option-label').textContent),'B');
+    assert.deepEqual(await degreePage.evaluate(()=>(__runtimeMessages||[]).filter(m=>m.action==='BOT_ERROR')),[]);
+    await degreePage.close();
+
     // Original pasted HTML, with only its PNG bytes replaced by a synthetic
     // payload matching the reported size. The outer header is test scaffolding.
     const antennaHtml = fs.readFileSync(path.join(__dirname, 'fixtures/antenna-base64-question.html'), 'utf8')
@@ -116,7 +182,7 @@ function trueFalseRow(key, text, token) {
     const antennaDomPrompt = await send(antennaPage, { action: 'OL_GET_AI_PROMPT' });
     assert.equal(antennaDomPrompt.ok, true, antennaDomPrompt.error);
     assert.match(antennaDomPrompt.prompt, /Trên nóc một tòa nhà/);
-    assert.ok(antennaDomPrompt.prompt.includes('<mn>50</mn>'));
+    assert.ok(antennaDomPrompt.prompt.includes('50°'));
     assert.doesNotMatch(antennaDomPrompt.prompt, /A{1000}|<svg|<path/);
     assert.equal(await antennaPage.$eval('#mathplay-answer-1', el => el.value), '', 'Prompt collection never enters an answer');
     const antennaExam = await send(antennaPage, { action: 'OL_GET_EXAM' });
@@ -130,7 +196,7 @@ function trueFalseRow(key, text, token) {
     const antennaApiPrompt = await send(antennaPage, { action:'OL_GET_AI_PROMPT' });
     assert.equal(antennaApiPrompt.ok, true, antennaApiPrompt.error);
     assert.match(antennaApiPrompt.prompt, /Chiều cao của tòa nhà/);
-    assert.ok(antennaApiPrompt.prompt.includes('<mn>40</mn>'));
+    assert.ok(antennaApiPrompt.prompt.includes('40°'));
     await antennaPage.close();
 
     const dateHtml = fs.readFileSync(path.join(__dirname, 'fixtures/vaccination-date-question.html'), 'utf8');

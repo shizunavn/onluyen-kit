@@ -52,6 +52,8 @@ Ví dụ định dạng đáp án:
 
 Chỉ giữ ID thực tế từ đề; không tự điền các ID ví dụ. Extension và CLI dùng chung bộ xác minh: nội dung có cấu trúc khớp, hoặc ID/vị trí của snapshot hiện tại có căn cứ. Công thức chưa hỗ trợ vẫn có thể ánh xạ theo snapshot hoặc nguồn nguyên dạng; nội dung bổ sung mâu thuẫn hay không xác minh được sẽ bị chặn. `verification` trong JSON mô tả căn cứ ánh xạ, không phải xác suất AI giải đúng. Không dùng điểm giống chuỗi hay biến đổi đại số. Chi tiết ở [MATH_CONTENT.md](MATH_CONTENT.md).
 
+Ký hiệu độ như `60°` và LaTeX `60^{\circ}` được đối chiếu với MathML của MathJax, kể cả khi dấu độ nằm trên một nhóm rỗng. Giá trị góc khác, số mũ `0` và toán tử `∘` vẫn khác nhau. Nếu chữ cái hoặc ID mâu thuẫn với nội dung, báo lỗi chỉ ra chính lựa chọn đó.
+
 ## CLI (tùy chọn)
 
 Cần Node.js 22.12+ và Chrome hoặc Edge đã cài trên máy.
